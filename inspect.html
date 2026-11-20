@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>压缩决策</title>
+<style>
+  :root {
+    --bg: #07080d;
+    --panel: #0f1118;
+    --line: #1e2230;
+    --text: #e6e9f0;
+    --dim: #8b93a7;
+    --near: #4ade80;
+    --mid: #fbbf24;
+    --far: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    padding: 20px 24px 40px;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; font-weight: 600; }
+  .sub { color: var(--dim); font-size: 12px; margin-bottom: 18px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+  .chip {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--dim);
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .chip.on { border-color: #3b82f6; color: var(--text); background: #111827; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .kpi .k { color: var(--dim); font-size: 11px; }
+  .kpi .v { font-size: 20px; font-weight: 600; margin-top: 2px; }
+  .kpi .v small { font-size: 12px; color: var(--dim); font-weight: 400; }
+  .bar { display: flex; height: 14px; border-radius: 6px; overflow: hidden; margin-bottom: 6px; background: #0b0d13; }
+  .bar span { display: block; height: 100%; }
+  .legend { display: flex; gap: 16px; color: var(--dim); font-size: 12px; margin-bottom: 18px; }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; font-size: 12px; }
+  td.seq { font-family: Consolas, monospace; color: var(--dim); }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+  .tag.t0 { background: rgba(74, 222, 128, .14); color: var(--near); }
+  .tag.t1 { background: rgba(251, 191, 36, .14); color: var(--mid); }
+  .tag.t2 { background: rgba(96, 165, 250, .14); color: var(--far); }
+  .empty { color: var(--dim); padding: 40px 0; text-align: center; }
+  .hint { color: var(--dim); font-size: 12px; margin-top: 14px; }
+</style>
+</head>
+<body>
+  <h1>压缩决策</h1>
+  <div class="sub" id="sub">读不到报告</div>
+  <div class="chips" id="chips"></div>
+  <div class="kpis" id="kpis"></div>
+  <div class="bar" id="bar"></div>
+  <div class="legend">
+    <span><i style="background:#4ade80"></i>原文</span>
+    <span><i style="background:#fbbf24"></i>事实行</span>
+    <span><i style="background:#60a5fa"></i>关键词</span>
+  </div>
+  <div id="table"></div>
+  <div class="hint">数据来自 $DSH_HOME/fish-jiyu/reports/&lt;会话&gt;.json，按会话分开存，每次自动压缩后重写，各留最近十次。</div>
+
+<script>
+const COLORS = { 0: '#4ade80', 1: '#fbbf24', 2: '#60a5fa' }
+const names = ['原文', '事实行', '关键词']
+
+function esc(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function fmt(n) {
+  const v = Number(n)
+  if (!Number.isFinite(v)) return '—'
+  return v >= 1000 ? (v / 1000).toFixed(1) + 'k' : String(v)
+}
+
+function render(list) {
+  const sub = document.getElementById('sub')
+  const chips = document.getElementById('chips')
+  const kpis = document.getElementById('kpis')
+  const bar = document.getElementById('bar')
+  const table = document.getElementById('table')
+
+  if (!Array.isArray(list) || list.length === 0) {
+    sub.textContent = SESSION === '' ? '还没有压缩记录' : '这个会话还没有压缩记录'
+    chips.innerHTML = ''
+    kpis.innerHTML = ''
+    bar.innerHTML = ''
+    table.innerHTML = '<div class="empty">' + (SESSION === ''
+      ? '等一次自动压缩之后再看。'
+      : '这个会话还没被压缩过。切回别的会话能看到那个会话的记录；下一次自动压缩后这里就有了。') + '</div>'
+    return
+  }
+
+  let current = 0
+  const draw = (index) => {
+    current = index
+    const r = list[index] || {}
+    const s = r.summary || {}
+    const when = String(r.at || '').slice(0, 19).replace('T', ' ')
+    sub.textContent = when + ' · ' + (r.provider || '未知引擎')
+
+    chips.innerHTML = list.map((item, i) => {
+      const t = String(item.at || '').slice(5, 16).replace('T', ' ')
+      return '<button class="chip' + (i === index ? ' on' : '') + '" data-i="' + i + '">' + esc(t) + '</button>'
+    }).join('')
+    chips.querySelectorAll('.chip').forEach((el) => {
+      el.onclick = () => draw(Number(el.dataset.i))
+    })
+
+    const ratio = r.ratio == null ? '—' : Math.round(r.ratio * 100) + '%'
+    const shadow = r.shadowed ? ('seq ' + r.shadowed.start + '-' + r.shadowed.end) : '—'
+    kpis.innerHTML = [
+      ['压前', fmt(r.before)],
+      ['压后', fmt(r.after) + ' <small>原体积 ' + ratio + '</small>'],
+      ['目标 / 上限', fmt(r.target) + ' / ' + fmt(r.cap)],
+      ['块数', fmt(s.blocks)],
+      ['分档', '原 ' + (s.near ?? 0) + ' · 事 ' + (s.mid ?? 0) + ' · 词 ' + (s.far ?? 0)],
+      ['遮蔽', shadow],
+    ].map(([k, v]) => '<div class="kpi"><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>').join('')
+
+    const blocks = Array.isArray(r.blocks) ? r.blocks : []
+    const counts = [0, 0, 0]
+    for (const b of blocks) counts[b.tier] = (counts[b.tier] || 0) + 1
+    bar.innerHTML = blocks.map((b) => {
+      const color = COLORS[b.tier] || '#334155'
+      return '<span style="flex:1;background:' + color + ';opacity:' + (0.55 + 0.45 * (b.tier === 0 ? 1 : 0.6)) + '" title="seq ' + esc(b.seq) + ' → ' + esc(b.tierName) + '"></span>'
+    }).join('')
+
+    table.innerHTML = blocks.length === 0
+      ? '<div class="empty">这一份没有块表。</div>'
+      : '<table><thead><tr><th>seq</th><th>档位</th><th>为什么</th></tr></thead><tbody>' +
+        blocks.map((b) =>
+          '<tr><td class="seq">' + esc(b.seq) + '</td>' +
+          '<td><span class="tag t' + b.tier + '">' + esc(b.tierName) + '</span></td>' +
+          '<td>' + esc(b.reasonName || '—') + '</td></tr>'
+        ).join('') +
+        '</tbody></table>'
+  }
+
+  draw(0)
+}
+
+const SESSION = new URLSearchParams(location.search).get('session') || ''
+const SRC = './report.json' + (SESSION === '' ? '' : '?session=' + encodeURIComponent(SESSION))
+
+fetch(SRC, { cache: 'no-store' })
+  .then((res) => (res.ok ? res.json() : []))
+  .then((data) => render(Array.isArray(data) ? data : [data]))
+  .catch((error) => {
+    document.getElementById('sub').textContent = '读报告失败：' + String(error && error.message ? error.message : error)
+    document.getElementById('table').innerHTML = '<div class="empty">先跑一次自动压缩。</div>'
+  })
+</script>
+</body>
+</html>

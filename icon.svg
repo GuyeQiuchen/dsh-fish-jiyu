@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect width="64" height="64" rx="14" fill="#0f172a"/>
+  <!-- 鱼身：近段完整 -->
+  <path d="M10 34c8-10 20-14 30-10 6 2 10 6 12 10-2 4-6 8-12 10-10 4-22 0-30-10z" fill="#7dd3fc"/>
+  <!-- 尾：远段只剩轮廓 -->
+  <path d="M52 34l8-8v16z" fill="#38bdf8" opacity="0.55"/>
+  <!-- 分档线：近实、中虚、远点 -->
+  <line x1="24" y1="22" x2="24" y2="46" stroke="#0f172a" stroke-width="1.5"/>
+  <line x1="34" y1="24" x2="34" y2="44" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="3 3"/>
+  <line x1="44" y1="27" x2="44" y2="41" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="1 4"/>
+  <circle cx="16" cy="33" r="2" fill="#0f172a"/>
+</svg>

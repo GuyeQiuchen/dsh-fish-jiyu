@@ -1,0 +1,25 @@
+# dsh-fish-jiyu —— 线性投影压缩引擎
+#
+# 自己带引擎和编译器（lib/vcc/ 是从 dsh-compaction-vcc 搬进来的 MIT 代码），
+# 不要求另装 vcc。但同一个 ctx.compaction 只能有一个实现，所以别的实现要先腾开。
+#
+# 生效方式：同一批生效里安好自己、关掉别的压缩引擎，中间别留空窗。
+- id: compaction-fold
+  disabled: true
+- insert:
+  - id: compaction-jiyu
+    name: 'dsh-fish-jiyu/engine'
+    config:
+      # 只在这些键上沿用原来的配置面；投影参数写在 index.js 的常量里。
+      thresholdRatio: 0.35
+      retainTurns: 1
+      retainTokens: 16384
+  # 暂缓工具单独一个 entry（和原来 vcc 的 tool-recall 一样）：宿主只给声明过的
+  # 插件注入 tools，塞进引擎类里拿不到。删掉这一行 = 没有 jiyu_hold，
+  # 引擎那半的暂缓判断仍能工作，只是没人能调。
+  - id: jiyu-hold
+    name: 'dsh-fish-jiyu/tool'
+  # 压缩决策页的宿主半：两条只读路由（inspect.html / report.json），
+  # 按钮在 client.js。删掉这一行 = 没有「压缩」那一格，引擎和工具都不受影响。
+  - id: jiyu-view
+    name: 'dsh-fish-jiyu/view'

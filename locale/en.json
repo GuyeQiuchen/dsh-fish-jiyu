@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Crucian · Linear Projection Compaction",
+    "description": "Projects history into three distance bands: near kept verbatim, mid as one fact line per block, far as keywords plus seq pointers. Every projection is rebuilt from the raw session log, so nothing accumulates and anything cut stays recallable by seq or keyword.",
+    "detail": "docs/DETAIL.md"
+  }
+}

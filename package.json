@@ -1,0 +1,53 @@
+{
+  "name": "dsh-fish-jiyu",
+  "version": "0.4.1",
+  "type": "module",
+  "description": "Linear-projection context compaction for DeepSeek Harness: near history verbatim, mid as one fact line per block, far as keywords plus seq pointers; every projection is rebuilt from the raw session log, so nothing accumulates and anything cut stays recallable by seq or keyword.",
+  "keywords": [
+    "dsh",
+    "compaction",
+    "context",
+    "memory",
+    "recall",
+    "linear"
+  ],
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./engine": "./index.js",
+    "./tool": "./tool.js",
+    "./view": "./view.js",
+    "./client": "./client.js",
+    "./lib/*": "./lib/*",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "tool.js",
+    "view.js",
+    "client.js",
+    "inspect.html",
+    "lib",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "install.ps1",
+    "uninstall.ps1"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": ["slots"]
+    }
+  }
+}

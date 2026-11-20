@@ -1,0 +1,35 @@
+MIT License
+
+Copyright (c) 2026 大肥鱼
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+This package contains code derived from dsh-compaction-vcc
+(https://github.com/tingfeng-droid/dsh-compaction-vcc, MIT), which in turn
+derives from dsh-compaction-instant by TsFreddie (MIT). The derived files live
+in lib/vcc/ and keep their original notices:
+
+  lib/vcc/engine.js         <- dsh-compaction-vcc src/index.js
+  lib/vcc/compiler.js       <- dsh-compaction-vcc src/compiler.js
+  lib/vcc/region.js         <- dsh-compaction-vcc src/region.js
+  lib/vcc/session-compat.js <- dsh-compaction-vcc src/session-compat.js
+  lib/vcc/preset-check.js   <- dsh-compaction-vcc src/preset-check.js
+  lib/vcc/shadow-check.js   <- dsh-compaction-vcc src/shadow-check.js
