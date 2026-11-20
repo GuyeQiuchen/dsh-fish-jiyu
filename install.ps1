@@ -25,6 +25,8 @@ $profileDir = Join-Path $userHome ('.dsh\profiles\' + $Profile)
 $pkgPath = Join-Path $profileDir 'package.json'
 $patchPath = Join-Path $profileDir 'cordis.patch.yml'
 $modDir = Join-Path $profileDir 'node_modules'
+$storeDir = Join-Path $profileDir 'local-packages'
+$storeCopy = Join-Path $storeDir 'dsh-fish-jiyu'
 $target = Join-Path $modDir 'dsh-fish-jiyu'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 
@@ -34,6 +36,14 @@ if (-not (Test-Path $pkgPath)) { throw "profile not found: $pkgPath" }
 Copy-Item $pkgPath "$pkgPath.bak-$stamp" -Force
 Copy-Item $patchPath "$patchPath.bak-$stamp" -Force
 Write-Host "backup: package.json.bak-$stamp, cordis.patch.yml.bak-$stamp"
+
+# 2) keep an own copy inside the profile; the dependency points here, so the
+#    folder you downloaded from can be deleted afterwards
+if (-not (Test-Path $storeDir)) { New-Item -ItemType Directory -Path $storeDir -Force | Out-Null }
+if (-not (Test-Path $storeCopy)) { New-Item -ItemType Directory -Path $storeCopy -Force | Out-Null }
+robocopy $here $storeCopy /MIR /NFL /NDL /NJH /NJS /NP /XD node_modules .git | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy to local-packages failed with $LASTEXITCODE" }
+Write-Host "stored: $storeCopy"
 
 # 2) copy the package into node_modules as a real directory
 if (-not (Test-Path $modDir)) { New-Item -ItemType Directory -Path $modDir -Force | Out-Null }
@@ -55,7 +65,7 @@ $pkg = Get-Content $pkgPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if (-not $pkg.dependencies) { $pkg | Add-Member -NotePropertyName 'dependencies' -NotePropertyValue ([pscustomobject]@{}) }
 $deps = $pkg.dependencies
 if (-not ($deps.PSObject.Properties.Name -contains 'dsh-fish-jiyu')) {
-  $deps | Add-Member -NotePropertyName 'dsh-fish-jiyu' -NotePropertyValue "link:$($here -replace '\\','/')"
+  $deps | Add-Member -NotePropertyName 'dsh-fish-jiyu' -NotePropertyValue "link:$($storeCopy -replace '\\','/')"
   Write-Host "dep: dsh-fish-jiyu added"
 }
 if (-not $pkg.dsh) { $pkg | Add-Member -NotePropertyName 'dsh' -NotePropertyValue ([pscustomobject]@{}) }
