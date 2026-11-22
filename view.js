@@ -1,11 +1,12 @@
 /**
- * Host half：把压缩决策页喂给 Web GUI。
+ * ⚠ 死代码，留着是历史，别照它改。
  *
- * 两条 GET 路由：
- *   /dsh-fish-jiyu/inspect.html           — 页面本体，每次请求从磁盘读，改 HTML 刷新即可，不用重启
- *   /dsh-fish-jiyu/report.json?session=…  — 这个会话最近几次压缩的报告；不带 session 读全局那份
+ * Host half：两条只读路由，配合同目录的 client.js 和 inspect.html 用。
+ * 那一半（client.js）注册不上去，界面上从来没出现过这一格，
+ * 所以这两条路由虽然能开，也没人从界面上点进来。2026-11-20 删过一次，
+ * 退版退到删除之前又回来了。要重做先读 DSH 的客户端模块加载逻辑。
  *
- * 按钮在 client.js。这一层只发文件，不碰压缩逻辑。
+ * 现在要看压缩情况：用 `jiyu_inspect` 工具，同一份数据。
  */
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'

@@ -22,7 +22,7 @@ vcc 会把历史压成「检查点正文」，而检查点自己又进下一轮�
 | 中段 | 每块一行事实：时间、你的原话、动过什么工具、收尾、`seq` 区间 | `[块 seq 3323-3325 · 23:16] 「…」 · 收尾「…」 · 原文按 seq 取回` |
 | 远段 | 每块只剩关键词 + `seq` 区间；另有一条全局「词 → 区间」索引 | `[块 seq 9-44] 词：风扇 bug 修复 扇设定数` |
 
-取回：`recall(seq)` 或 `search(关键词)` 直接查 `~/.dsh/sessions/.../session.v4.jsonl.zstd`，一个字都没删。
+取回：自带三个只读工具——`jiyu_search(关键词)` 在原文里搜出 `seq`，`jiyu_recall(seq 区间)` 分页读回原话，`jiyu_blocks()` 列出每块的档位与区间。底层读的是当前会话的事件日志（`session.snapshotEvents()`），一个字都没删。
 
 工具结果单独处理：原文不进上下文（整段是百万 token 级），只抽一行摘要——有报错行就取报错行，否则取末行。中段每块的事实行会带上最多两句「结果」；近段里失败的工具行补一句结果，成功的靠正文自己说。其余按 seq 取回。
 
@@ -51,7 +51,7 @@ vcc 会把历史压成「检查点正文」，而检查点自己又进下一轮�
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `thresholdRatio` | 0.55（本机 0.35） | 上下文压力到窗口多少比例时触发压缩 |
+| `thresholdRatio` | 0.35（包自带 bundle 与 `DEFAULT_THRESHOLD` 一致） | 上下文压力到窗口多少比例时触发压缩 |
 | `retainTurns` | 1 | 保留最近几轮原文 |
 | `retainTokens` | 16384 | 保留区 token 上限 |
 
@@ -89,26 +89,26 @@ vcc 会把历史压成「检查点正文」，而检查点自己又进下一轮�
 
 学 dsh-context（bowenliang123）的分工：算的归宿主，看的归前端。
 
-**UI（2026-11-18 加）**：不开新标签页、不切视图。输入框左边多一个「压缩」小按钮，点开是浮层，Esc 或点遮罩关闭，看完接着聊。
+**界面还在包里，但注册不生效（2026-11-21 记）**：做过一版浮层和会话头入口，客户端模块始终注册不上去，界面上从没出现过。2026-11-20 删过一次，后来退版退到删除之前，`client.js`、`view.js`、`inspect.html` 又回来了，`package.json` 的 `exports`／`files`／`dsh.client` 和 `cordis.patch.yml` 的 `jiyu-view` 也都还挂着。
 
-- `view.js`（宿主半）：两条只读路由 `/dsh-fish-jiyu/inspect.html`、`/dsh-fish-jiyu/report.json`，每次现读磁盘，改页面刷新即可；
-- `client.js`（前端半）：注册两处——`conversation.input.left` 放按钮，`shell.overlay` 放浮层（框架级，不受列容器裁剪；composer 会裁剪 fixed，所以浮层必须挂在这一层）。两处共享一个模块级开关；
-- `inspect.html`：顶部按时间选一次压缩，KPI 显示压前压后、原体积比例、目标与上限、块数、分档、遮蔽区间，中间一条按档位着色的堆叠条，下面是逐块表（seq / 档位 / 为什么）。
+**为什么不删**：删干净要同时动三处（三个文件、清单三段、配置两行），少一处就是配置指向不存在的模块，下次加载直接报错。加载器那一层至今没读透，2026-11-20 就是在这里栽的。所以现在选了加注释：三个文件顶部都写了「死代码，别照它改」，行为和以前一样——跑不到，不显示，也不报错。
 
-Client 侧可用的内置只有 `ctx`、`React`、`host`、`styles`、`console`，没有 `react-dom`，所以浮层不能 `createPortal`，改用 `shell.overlay` 槽位。
+要看压缩情况用 `jiyu_inspect` 工具，同一份数据一条命令。
+
+**新增 seq 范围（2026-11-21）**：报告多了 `seqFrom` / `seqTo`，是这次压缩盖住的 seq 区间。有它，记忆体那头才能说清「上次压掉的是哪一段」，光有压前压后说不清。
 
 **按会话分开存（2026-11-18 改）**：以前所有会话写同一份 `last-report.json`，切到别的会话看到的还是上一条的压缩记录。现在报告按会话落到 `$DSH_HOME/fish-jiyu/reports/<会话>.json`，各留最近十次；同时更新一份全局 `last-report.json` 给 `jiyu_inspect` 兜底（它不知道会话时读那份）。
 
-页面按会话取数：`conversation.view` 的组件能从宿主拿到 `sessionId`，拼进 iframe 的 `?session=`，页面再带这个参数请求 `report.json?session=…`；`view.js` 从查询串取会话，读对应文件。会话 id 会消毒（怪字符替换、连续点压掉），不能拿它拼路径穿越。这个会话还没被压过时，页面会明说，不会拿别人的记录冒充。
-
 AI 也可以用 `jiyu_inspect` 工具拿同一份数据，两条路读同一个文件。
+
+**加载诊断（2026-11-21 修）**：`markAlive()` 与 `recordLoadError()` 用了 `writeFileSync`、`path`、`homedir`，但从来没 import。异常被 catch 吞掉，`loaded.txt` 和 `load-error.txt` 一个都没生成，等于这段自检从写出来那天起就是死的。外部评估读代码时发现，补了三行 import，现在 `loaded.txt` 会在模块加载时真的写出来。
 
 测试：`test/report.mjs` 六条（结构、文本、截断、落盘与历史、旧格式兼容、无报告返回 null）。
 
 ## 边界与已知限制
 
-- 依赖 `dsh-compaction-vcc`（0.7.x）的 `compile()` 扩展点、`src/compiler.js` 的 `compileNodes` / `estimateEntryTokens`，以及 token 估算尺度；vcc 大版本升级后需复查签名和这两条子路径导出。
-- 与 vcc、fold 三选一：同一个 `ctx.compaction` 只能有一个实现，装本插件时要把另外两个的 bundle 关掉（本包自带 patch 已完成这件事）。
+- 沿用 dsh-compaction-vcc（MIT）的 `compile()` 扩展点和 `compileNodes` / `estimateEntryTokens` 的估算尺度；代码已搬进 `lib/vcc/`，不另装 vcc，宿主接口变了要手动同步那六个文件。
+- 与 vcc、fold、basic 四选一：同一个 `ctx.compaction` 只能有一个实现。本包的 bundle patch 会关掉 `compaction-fold` 与 `compaction-basic`；旧 profile 里若还开着 `compaction-vcc`，`install.sh` / `install.ps1` 会顺手关掉它。
 - 只在本机（DSH 2.36 + vcc 0.7.4）验证过；换机器、换模型窗口不受影响，但阈值要按窗口比例配。
 - 中段事实行由规则抽取，不做模型改写：它负责导航，不负责复述；要细节就按 seq 取原文。
 - 短寒暄没有可检索的词，远段不保证能取回；重要的小事请让它落到文件或记忆页里。
@@ -153,7 +153,7 @@ uninstall.ps1        回滚到 vcc
 | 49a4ede8（鲶鱼整段） | 3,521 | 370 | 165,323 → 30,984（18.7%） | 329 / 224 / 93（138 块带「结果」） | 2,427 字（vcc 默认 733 字） |
 | a5245fd2（本会话全量） | 1,363 | 43 | 145,050 → 30,579 | 全部在近段（预算够，不强行压） | 2,305 字（vcc 默认 937 字） |
 
-脚本：`test/calibrate.mjs <会话目录名> [起始seq] [结束seq]`。
+脚本：`test/calibrate.mjs <会话目录名>`，区间用 `JIYU_SEQ_LO` / `JIYU_SEQ_HI` 环境变量。
 
 旧管线的对照数字（2026-11-17，那时是压 vcc 的产物，见 `test/jiyu.test.mjs`）：
 
@@ -163,6 +163,26 @@ uninstall.ps1        回滚到 vcc
 | 49a4ede8（鲶鱼 11-13 ~ 11-15） | 1,625 | 369 | 294,978 → 97,933（33%） | 557 / 111 / 110 | 105/109（96%） |
 
 取回率口径：远段每个用户块的提问关键词，能否在该块的关键词行里找到。
+
+## 原文取回：jiyu_search / jiyu_recall / jiyu_blocks（2026-11-22）
+
+以前这里写着「取回：`recall(seq)` 或 `search(关键词)`」，但那两个工具在宿主里并不存在——原文确实没删，可能不能取回全看有没有人手动解压日志。这一版把承诺补成了工具。
+
+**三个工具，全部只读。**
+
+| 工具 | 做什么 | 边界 |
+| --- | --- | --- |
+| `jiyu_search(query, limit, all)` | 按词在事件正文里搜（用户话、助手话、工具调用与结果都算），返回 `seq` + 摘录，标注「已折叠 / 在窗口内」 | 字面匹配，不做同义词；`all: true` 时连没被折叠的也搜 |
+| `jiyu_recall(from, to, offset, maxChars)` | 按 `seq` 区间读回原文，默认 6000 字一页，页尾给下一个 `offset` | 只读，不改 surface；分页是为了不撞工具结果截断 |
+| `jiyu_blocks(tier, limit)` | 读最近一次压缩报告，列块：档位、`seq` 区间、分档理由 | 只读报告，没有报告就说没有 |
+
+**为什么不做成「按块 decompress」。** 块只是压缩时的一个分组，日志里没有块边界；按 `seq` 区间取回是同一件事，而且不依赖引擎记住块号——重启后报告在、块号就在，报告没了也还能按搜索到的 `seq` 取。
+
+**和投影的关系：没有关系。** 新工具不参与压缩决策、不改阈值、不注册压缩后端，只在被调用时读一次日志。压缩该压还是压，远段该只剩关键词还是只剩关键词。
+
+**模块化。** 删掉 `lib/recall.js`、`tool.js` 里 `registerRecallTools` 那一行 import 和调用，工具就没了；引擎那半不受影响。
+
+**测试。** `node --test test/recall.mjs`：正文抽取（含工具调用）、区间取回、分页 offset、块 → 折叠集合。实测（2026-11-22）：`jiyu_search("阈值")` 命中 5 条，`jiyu_recall(3550, 3550)` 读回「把他的压缩阈值改到0.35，根据压缩之后再给我结果」。
 
 ## 安装 / 卸载
 

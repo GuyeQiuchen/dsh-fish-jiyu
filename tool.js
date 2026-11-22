@@ -11,6 +11,7 @@
  */
 import { registerHoldTool } from './lib/hold.js'
 import { registerInspectTool } from './lib/inspect.js'
+import { registerRecallTools } from './lib/recall.js'
 
 export const name = 'jiyu-hold'
 export const inject = ['tools']
@@ -29,5 +30,10 @@ export function apply(ctx) {
     registerInspectTool(ctx)
   } catch (error) {
     console.warn(`compaction-jiyu: inspect tool skipped: ${String(error?.message ?? error)}`)
+  }
+  try {
+    registerRecallTools(ctx)
+  } catch (error) {
+    console.warn(`compaction-jiyu: recall tools skipped: ${String(error?.message ?? error)}`)
   }
 }

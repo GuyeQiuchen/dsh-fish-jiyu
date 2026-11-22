@@ -34,8 +34,12 @@ if (-not (Test-Path $pkgPath)) { throw "profile not found: $pkgPath" }
 
 # 1) back up the two files we edit
 Copy-Item $pkgPath "$pkgPath.bak-$stamp" -Force
-Copy-Item $patchPath "$patchPath.bak-$stamp" -Force
-Write-Host "backup: package.json.bak-$stamp, cordis.patch.yml.bak-$stamp"
+if (Test-Path $patchPath) {
+  Copy-Item $patchPath "$patchPath.bak-$stamp" -Force
+  Write-Host "backup: package.json.bak-$stamp, cordis.patch.yml.bak-$stamp"
+} else {
+  Write-Host "backup: package.json.bak-$stamp (no cordis.patch.yml yet)"
+}
 
 # 2) keep an own copy inside the profile; the dependency points here, so the
 #    folder you downloaded from can be deleted afterwards
@@ -48,11 +52,11 @@ Write-Host "stored: $storeCopy"
 # 2) copy the package into node_modules as a real directory
 if (-not (Test-Path $modDir)) { New-Item -ItemType Directory -Path $modDir -Force | Out-Null }
 $existing = Get-Item $target -ErrorAction SilentlyContinue
-if ($existing -and $existing.LinkType -eq 'SymbolicLink') { $existing.Delete() }
+if ($existing -and $existing.LinkType -in @('SymbolicLink','Junction')) { Remove-Item $target -Recurse -Force }
 if (-not (Test-Path $target)) { New-Item -ItemType Directory -Path $target -Force | Out-Null }
 $rcArgs = @(
   $here, $target,
-  '/MIR', '/NFL', '/NDL', '/NJH', '/NJS', '/NP',
+  '/MIR', '/XJ', '/NFL', '/NDL', '/NJH', '/NJS', '/NP',
   '/XF', '*.bak*', 'loaded.txt', 'load-error.txt', 'index.full.js*',
   '/XD', 'node_modules', '.git'
 )
@@ -78,17 +82,20 @@ if ($bundles -notcontains 'dsh-fish-jiyu') {
   $pkg.dsh.profile.bundles = $bundles
   Write-Host "bundle: dsh-fish-jiyu added after dsh-compaction-vcc"
 }
-$pkg | ConvertTo-Json -Depth 20 | Set-Content $pkgPath -Encoding UTF8
+[System.IO.File]::WriteAllText($pkgPath, ($pkg | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
 
-# 4) cordis.patch.yml: turn vcc off (two engines registering at once collide)
-$patch = [System.IO.File]::ReadAllText($patchPath, [System.Text.Encoding]::UTF8)
-if ($patch.Length -lt 100) { throw "cordis.patch.yml looks empty ($($patch.Length) chars); aborting" }
-$patch = $patch -replace "(?m)^- id: compaction-vcc\r?\n  disabled: false", "- id: compaction-vcc`n  disabled: true"
-if ($patch -notmatch '(?m)^- id: compaction-jiyu') {
-  $patch = $patch.TrimEnd() + "`n`n- id: compaction-jiyu`n  config:`n    thresholdRatio: 0.55`n    retainTurns: 1`n    retainTokens: 16384`n"
+# 4) cordis.patch.yml: 只做「关掉别的压缩引擎」。
+#    条目由包自带的 bundle 插入；脚本再插一份会重名（DSH 对重复 id 会报冲突）。
+#    全新 profile 可能还没有这个文件，没有就跳过。
+if (Test-Path $patchPath) {
+  $patch = [System.IO.File]::ReadAllText($patchPath, [System.Text.Encoding]::UTF8)
+  if ($patch.Length -lt 100) { throw "cordis.patch.yml looks empty ($($patch.Length) chars); aborting" }
+  $patch = $patch -replace "(?m)^- id: compaction-vcc\r?\n  disabled: false", "- id: compaction-vcc`n  disabled: true"
+  [System.IO.File]::WriteAllText($patchPath, $patch, (New-Object System.Text.UTF8Encoding($false)))
+  Write-Host "patch: existing vcc row disabled (jiyu row comes from the bundle)"
+} else {
+  Write-Host "patch: no cordis.patch.yml yet; skipped (bundle provides the row)"
 }
-[System.IO.File]::WriteAllText($patchPath, $patch, (New-Object System.Text.UTF8Encoding($false)))
-Write-Host "patch: compaction-vcc disabled, compaction-jiyu configured"
 
 # 5) a link: dependency makes pnpm rewrite the directory into a symlink the
 # next time any plugin is installed. Keep the copy authoritative afterwards.

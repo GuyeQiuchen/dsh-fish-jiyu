@@ -11,6 +11,9 @@
  *   - 远段：每块只剩关键词，外加一条「关键词 → seq」索引，供 search/recall 取回。
  * 旧检查点一律折成指针，避免上一次的检查点正文被原样重复（雪球的根）。
  */
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import path from 'node:path'
 import { assignBlocks, projectRegion, buildIndexLine, resultDigest } from './lib/linear.js'
 // —— 决策报告（可删）：写一份 last-report.json，供 jiyu_inspect 读。
 import { makeReport, writeReport } from './lib/report.js'
@@ -344,6 +347,8 @@ export class FishLinearEngine extends DefaultEngine {
         return { ...result, linear: { skipped: 'not-smaller', baseTokens, generousTokens, after } }
       }
       // 留一份决策报告给 jiyu_inspect 读：每块落在哪一档、为什么。
+      // 顺带记下这次盖住的 seq 范围，被折掉的原文按区间回原始日志取。
+      const seqs = projected.entries.map((entry) => Number(entry?.seq)).filter((n) => Number.isFinite(n) && n > 0)
       writeReport(
         makeReport({
           session: sessionIdOf(prepared),
@@ -354,6 +359,9 @@ export class FishLinearEngine extends DefaultEngine {
           after,
           stats: projected.stats,
           shadowed: result?.shadowedRange,
+          // 不用展开：条目上万时 Math.min(...seqs) 会爆调用栈
+          seqFrom: seqs.length ? seqs.reduce((a, b) => (a < b ? a : b)) : 0,
+          seqTo: seqs.length ? seqs.reduce((a, b) => (a > b ? a : b)) : 0,
         }),
       )
       return {

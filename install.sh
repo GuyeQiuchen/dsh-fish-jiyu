@@ -31,10 +31,14 @@ if [ ! -f "$PKG" ]; then
   exit 1
 fi
 
-# 1) back up the two files we edit
+# 1) back up the files we edit (a fresh profile may have no patch yet)
 cp "$PKG" "$PKG.bak-$STAMP"
-cp "$PATCH" "$PATCH.bak-$STAMP"
-echo "backup: package.json.bak-$STAMP, cordis.patch.yml.bak-$STAMP"
+if [ -f "$PATCH" ]; then
+  cp "$PATCH" "$PATCH.bak-$STAMP"
+  echo "backup: package.json.bak-$STAMP, cordis.patch.yml.bak-$STAMP"
+else
+  echo "backup: package.json.bak-$STAMP (no cordis.patch.yml yet)"
+fi
 
 # 2) keep an own copy inside the profile; the dependency points here, so the
 #    folder you downloaded from can be deleted afterwards
@@ -93,7 +97,11 @@ if (!bundles.includes('dsh-fish-jiyu')) {
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8')
 NODE
 
-# 4) cordis.patch.yml: turn vcc off, add the jiyu entry
+# 4) cordis.patch.yml: 只有旧 profile 里还留着 compaction-vcc 时才去关它。
+#    条目本身由包自带的 cordis.patch.yml（bundle）插入，这里不再写 insert，
+#    否则会和 bundle 的同名条目重复（DSH 对重复 id 会报冲突）。
+#    全新 profile 可能还没有这个文件，没有就跳过。
+if [ -f "$PATCH" ]; then
 node - "$PATCH" <<'NODE'
 const fs = require('node:fs')
 const [patchPath] = process.argv.slice(2)
@@ -102,13 +110,18 @@ if (patch.length < 100) {
   console.error('cordis.patch.yml looks empty; aborting')
   process.exit(1)
 }
+const before = patch
 patch = patch.replace(/^- id: compaction-vcc\r?\n  disabled: false/m, '- id: compaction-vcc\n  disabled: true')
-if (!/^- id: compaction-jiyu/m.test(patch)) {
-  patch = patch.trimEnd() + '\n\n- id: compaction-jiyu\n  config:\n    thresholdRatio: 0.55\n    retainTurns: 1\n    retainTokens: 16384\n'
+if (patch !== before) {
+  fs.writeFileSync(patchPath, patch, 'utf8')
+  console.log('patch: compaction-vcc disabled')
+} else {
+  console.log('patch: unchanged (jiyu row comes from the bundle)')
 }
-fs.writeFileSync(patchPath, patch, 'utf8')
-console.log('patch: compaction-vcc disabled, compaction-jiyu configured')
 NODE
+else
+  echo "patch: no cordis.patch.yml yet; skipped (bundle provides the row)"
+fi
 
 # 5) syntax check before telling anyone to restart
 if command -v node >/dev/null 2>&1; then

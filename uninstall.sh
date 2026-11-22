@@ -25,8 +25,12 @@ if [ ! -f "$PKG" ]; then
 fi
 
 cp "$PKG" "$PKG.bak-$STAMP"
-cp "$PATCH" "$PATCH.bak-$STAMP"
-echo "backup: package.json.bak-$STAMP, cordis.patch.yml.bak-$STAMP"
+if [ -f "$PATCH" ]; then
+  cp "$PATCH" "$PATCH.bak-$STAMP"
+  echo "backup: package.json.bak-$STAMP, cordis.patch.yml.bak-$STAMP"
+else
+  echo "backup: package.json.bak-$STAMP (no cordis.patch.yml)"
+fi
 
 if [ -e "$TARGET" ] || [ -L "$TARGET" ]; then
   rm -rf "$TARGET"
@@ -46,6 +50,7 @@ fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8')
 console.log('package.json cleaned')
 NODE
 
+if [ -f "$PATCH" ]; then
 node - "$PATCH" <<'NODE'
 const fs = require('node:fs')
 const [patchPath] = process.argv.slice(2)
@@ -55,6 +60,9 @@ patch = patch.replace(/^- id: compaction-vcc\r?\n  disabled: true/m, '- id: comp
 fs.writeFileSync(patchPath, patch, 'utf8')
 console.log('patch: compaction-jiyu removed, compaction-vcc re-enabled')
 NODE
+else
+  echo "patch: no cordis.patch.yml; skipped"
+fi
 
 echo ""
 echo "done. Restart DSH to apply."

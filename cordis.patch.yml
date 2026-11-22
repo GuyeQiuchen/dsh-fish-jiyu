@@ -6,6 +6,10 @@
 # 生效方式：同一批生效里安好自己、关掉别的压缩引擎，中间别留空窗。
 - id: compaction-fold
   disabled: true
+# 宿主自带的基础压缩引擎：不关掉它会和本引擎抢同一个服务名
+# （非 web profile 没有 dsh-web-app 那层兜底，撞名会直接抛）
+- id: compaction-basic
+  disabled: true
 - insert:
   - id: compaction-jiyu
     name: 'dsh-fish-jiyu/engine'
