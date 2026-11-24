@@ -2,12 +2,13 @@
 
 按时间远近把上下文投成三档的压缩引擎：**近段保原文、中段一行事实、远段只剩关键词和 seq 指针**，每轮从原始会话日志重新投影，所以不会叠摘要链；压掉的原文都能用自带工具按 seq 或关键词取回（`jiyu_search` / `jiyu_recall` / `jiyu_blocks`）。
 
-自带引擎和编译器：`lib/vcc/` 是从 [dsh-compaction-vcc](https://github.com/tingfeng-droid/dsh-compaction-vcc)（MIT，TsFreddie / Tingfeng）搬进来的代码，**不需要另装 vcc**。触发时机、保留区、事务回滚、surface 协议沿用它的做法，投影那一步（`compile()`）是鲫鱼自己的；条目由本引擎按放宽的尺度自己编，所以近段接近原话。
+自带引擎和编译器：`lib/vcc/` 是从 [dsh-compaction-vcc](https://github.com/tingfeng-droid/dsh-compaction-vcc)（MIT，TsFreddie / Tingfeng）搬进来的代码，**不需要另装 vcc**（来源与偏离见 [`docs/vcc-fork.md`](docs/vcc-fork.md)）。触发时机、保留区、事务回滚、surface 协议沿用它的做法，投影那一步（`compile()`）是鲫鱼自己的；条目由本引擎按放宽的尺度自己编，所以近段接近原话。
 
 需要 DSH 内核提供的四个包：`@deepseek-ai/dsh-compaction`、`dsh-llm`、`dsh-util-values`、`@deepseek-ai/schemastery`。这四个是宿主自带的，不用单独装。
 
+- 设计取向（改代码先读）：[docs/ORIENTATION.md](docs/ORIENTATION.md)
 - 详细说明（做什么、怎么回取、限制、验证数据）：[docs/DETAIL.md](docs/DETAIL.md)
-- 测试：`node test/jiyu.test.mjs [会话日志路径]`
+- 测试：`npm test`（74 个自动化用例）；真实会话回归：`node test/jiyu.test.mjs [会话日志路径]`
 - 校准：`JIYU_SEQ_LO=<起始seq> JIYU_SEQ_HI=<结束seq> node test/calibrate.mjs <会话目录名>`
 
 ## 取回原文
@@ -21,6 +22,23 @@
 | `jiyu_blocks(tier, limit)` | 列最近一次压缩的块：档位、`seq` 区间、分档理由 |
 
 典型用法：先在 `jiyu_search` 里搜到 `seq 3550`，再用 `jiyu_recall(3550, 3550)` 读回原话。不知道 `seq` 也能用，搜索会直接给。
+
+## 约束区
+
+压得越久，越容易把「必须遵守什么」折没：中段事实行还会继续折成关键词。所以检查点最前面固定一块约束区，不参与折叠。
+
+- **只收用户原话里显式的要求**：不要 / 必须 / 改成 / 最多 / 记得 / 下次 / 回退备份这类祈使句；问句、举例、假设、事实陈述一律不抽（宁可漏，不可抽错）。
+- **每行带 seq**：约束区只负责提醒，原文仍用 `jiyu_recall` 按 seq 取回。
+- **上限 8 行 / 480 字符**（约 300–350 token）：禁止类与带数值的参数优先保留，超了先丢目标。
+- **继承**：第二次压缩从上一份检查点里读回约束段，逐字节不变；同一件事换说法（改成/调高）时保留新说法，并在行尾注明「原 seq X 已被 seq Y 改」。
+- 抽不到就是空串，一个字不占；不改变原有行为。
+
+模拟测试（拿真实会话当题库，含人工标注的正负例）：
+
+```sh
+node scripts/sim-constraints.mjs [会话日志路径]
+node test/integration-constraints.mjs [会话日志路径]
+```
 
 ## 装
 
@@ -53,6 +71,7 @@
 
 ## 变更
 
+- **0.4.5（2026-11-23）**：新增约束区（`lib/constraints.js`，可整块删除）。检查点最前固定一块「仍有效的要求」，只抽用户显式祈使句、每行带 seq、上限 8 行 / 480 字符，二次压缩逐字节继承、换说法时留痕。实测：真实会话 423 条用户消息中抽 7 条（人工标注 7 正例全中、0 误抽）；约束区约 300 token，占 33 万上下文的 0.1%。问句与事实陈述不抽是刻意的取舍。
 - **0.4.4（2026-11-22，审计后）**：
   - **取回工具**修两处真问题：`textOfEvent` 原先认不出宿主真实事件形状（正文在 `data.message.content`），助手消息和工具结果全都读不到（实测 956 条助手消息 0 条可读）；分页的跳过与写入用了两套字符口径，会整条漏事件。现在覆盖 959/960 助手消息、758/758 工具结果，分页逐页收集等于区间全集。
   - **投影**：预算紧时原来会把中段/远段整段丢掉、块连 seq 都不剩，报告却写「保留了」；现在每块至少留一行指针，全局索引也保住，代价从近段原文里出。报告统计改成按真发出去的行数。

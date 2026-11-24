@@ -1,3 +1,4 @@
+// 改这个包之前先读 docs/ORIENTATION.md（取向、四个不变量、什么情况该推翻）。边界见 docs/scope.md。
 /**
  * dsh-fish-jiyu —— 线性投影压缩引擎。
  *
@@ -14,9 +15,11 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { assignBlocks, projectRegion, buildIndexLine, resultDigest } from './lib/linear.js'
+import { assignBlocks, projectRegion, buildIndexLine, resultDigest, stripReminders, sessionAlert, unknownAlert } from './lib/linear.js'
 // —— 决策报告（可删）：写一份 last-report.json，供 jiyu_inspect 读。
 import { makeReport, writeReport } from './lib/report.js'
+// —— 约束区（可删）：把用户明确要求单独留一块，不参与折叠。
+import { collectConstraints, renderConstraints, prependConstraintEntry } from './lib/constraints.js'
 // —— 暂缓模块（可删）：工具入口在 tool.js；这里只用状态判断。
 import { isHeld, holdState } from './lib/hold.js'
 // —— 搬运诊断：模块被执行时留个时间戳，用来区分「没被加载」和「加载了但没激活」。
@@ -105,9 +108,34 @@ function textOf(message) {
   if (!Array.isArray(content)) return ''
   const parts = []
   for (const block of content) {
-    if (block !== null && typeof block === 'object' && typeof block.text === 'string') parts.push(block.text)
+    if (block === null || typeof block !== 'object') continue
+    if (typeof block.text !== 'string') continue
+    // 2026-11-24 为什么用白名单：一段真实窗口里 reasoning 占 assistant 文本的 88%，
+    // 折进检查点等于每轮把上一批思维过程再喂回来——那正是「做做做」这类循环的燃料。
+    // 白名单比黑名单多一层保障：以后宿主新增什么类型，默认不进上下文。
+    // 代价是未知类型会被静默丢掉，所以另一路用 unknownTypesOf 记账、由调用方上报。
+    if (String(block.type ?? '') !== 'text') continue
+    parts.push(block.text)
   }
   return parts.join('\n')
+}
+
+/**
+ * 数出这条消息里「不在白名单内、但有文本」的块，按类型累计字符。
+ * 用途：压缩时上报，避免宿主换了块类型而我们静默丢内容。
+ * @param message - 消息对象。
+ * @param into - 累加用的 Map<类型, 字符数>。
+ */
+function unknownTypesOf(message, into) {
+  const content = message?.content
+  if (!Array.isArray(content) || into === undefined) return
+  for (const block of content) {
+    if (block === null || typeof block !== 'object') continue
+    if (typeof block.text !== 'string' || block.text === '') continue
+    const type = String(block.type ?? '(无类型)')
+    if (type === 'text') continue
+    into.set(type, (into.get(type) ?? 0) + block.text.length)
+  }
 }
 
 /**
@@ -167,7 +195,7 @@ function enrichNearEntries(entries, byResult) {
   })
 }
 
-function collectNodes(prepared, digests = new Map()) {
+function collectNodes(prepared, digests = new Map(), unknown = null) {
   const out = []
   for (const seq of prepared.shadowedSeqs) {
     let event
@@ -187,7 +215,9 @@ function collectNodes(prepared, digests = new Map()) {
     let text = ''
     if (isUser || isAssistant) {
       try {
-        text = textOf(prepared.session.deriveEventMessage(event))
+        const message = prepared.session.deriveEventMessage(event)
+        unknownTypesOf(message, unknown ?? undefined)
+        text = textOf(message)
       } catch {
         text = ''
       }
@@ -226,7 +256,9 @@ function collectCompileNodes(prepared) {
     } catch {
       message = null
     }
-    out.push({ seq: Number(seq), message })
+    // 2026-11-23：把来源一起带下去。约束区只该收「主人说的话」，
+    // 而 runtime-context / schedule / 记忆注入都挂在 user 角色上，只能靠 source.kind 分。
+    out.push({ seq: Number(seq), message, sourceKind: String(event?.data?.source?.kind ?? '') })
   }
   return out
 }
@@ -307,7 +339,9 @@ export class FishLinearEngine extends DefaultEngine {
       const cap = resolveCap(this, prepared)
       const digests = collectToolDigests(prepared)
       const nodes = collectCompileNodes(prepared)
-      const blocks = assignBlocks(collectNodes(prepared, digests.byCall))
+      // 未知块类型单独记账：白名单把这些块挡在上下文外，但必须让它可见。
+      const unknownTypes = new Map()
+      const blocks = assignBlocks(collectNodes(prepared, digests.byCall, unknownTypes))
       if (nodes.length === 0 || blocks.length === 0) {
         return { ...result, linear: { skipped: 'empty-region' } }
       }
@@ -341,7 +375,37 @@ export class FishLinearEngine extends DefaultEngine {
         midMax: DEFAULT_MID_MAX,
         farWords: DEFAULT_FAR_WORDS,
       })
-      const after = projected.stats.tokens
+      // —— 约束区：紧跟在投影之后拼在最前。它不参与折叠，只继承 + 新抽。
+      // 抽不出东西就是空串，一个字都不占，也不会改变原有行为。
+      // 2026-11-23 为什么在外面转一次：nodes 是 `{ seq, message }`（编译器的形状），
+      // collectConstraints 要的是 `{ seq, role, text }`。直接把 nodes 递进去，text 恒为空，
+      // 每次都抽出 0 条——report 里 constraints 一直是 null。而单测喂的是 role/text 形状，
+      // 所以测试全绿、真机从来没生效过一次。这是 0.4.5 的实伤。
+      // 只认「主人真正说的话」和「旧检查点里的约束段」。
+      // runtime-context / schedule / skill-catalog / 记忆注入全都挂在 user 角色上，
+      // 光看角色会把模板句当成主人的要求继承下去。sourceKind 为空时（单测、旧形状）不拦。
+      const 收这个来源 = (kind) => kind === '' || kind === 'user' || kind === 'compact-checkpoint'
+      const constraintNodes = nodes
+        .map((node) => ({
+          seq: Number(node?.seq ?? 0),
+          role: String(node?.message?.role ?? ''),
+          text: stripReminders(textOf(node?.message)),
+          sourceKind: String(node?.sourceKind ?? ''),
+        }))
+        .filter((node) => node.text !== '' && 收这个来源(node.sourceKind))
+      const constraintInfo = collectConstraints(constraintNodes)
+      const constraintText = renderConstraints(constraintInfo.rows)
+      // —— 会话体量提醒：过 6 万条就顶一行，平时不占字。
+      // 2026-11-24 为什么放在压缩时：体积没有天花板，真正的墙是日志解析与内存，
+      // 而这个信号不会自己冒出来——每次压缩是唯一稳定能看到 seqTo 的时刻。
+      const maxSeq = nodes.reduce((m, node) => Math.max(m, Number(node?.seq ?? 0)), 0)
+      const alertText = sessionAlert(maxSeq) + unknownAlert(unknownTypes)
+      // 顺序：提醒先进，约束再进，所以约束永远在最前。
+      const withAlert = prependConstraintEntry(projected.entries, alertText, maxSeq)
+      const entries = prependConstraintEntry(withAlert, constraintText, Number(prepared?.shadowedSeqs?.[0] ?? 0))
+      const constraintTokens = constraintText === '' ? 0 : estimateTokens(constraintText)
+      const alertTokens = alertText === '' ? 0 : estimateTokens(alertText)
+      const after = projected.stats.tokens + constraintTokens + alertTokens
       // 压不掉还不如不压：交给父类结果，别硬投影出一个更大的检查点。
       if (baseTokens > 0 && after >= baseTokens * 0.98) {
         return { ...result, linear: { skipped: 'not-smaller', baseTokens, generousTokens, after } }
@@ -360,15 +424,34 @@ export class FishLinearEngine extends DefaultEngine {
           stats: projected.stats,
           shadowed: result?.shadowedRange,
           // 不用展开：条目上万时 Math.min(...seqs) 会爆调用栈
+          // 2026-11-22 实测约 13 万条抛 RangeError，且会被 compile() 的 catch 吞掉，
+          // 表现为「投影静默跳过」——没有任何报错，只是这一次没压。
+          // 验：node -e "Math.min(...new Array(130000).fill(1))" 会抛，reduce 不会
           seqFrom: seqs.length ? seqs.reduce((a, b) => (a < b ? a : b)) : 0,
           seqTo: seqs.length ? seqs.reduce((a, b) => (a > b ? a : b)) : 0,
+          sessionEvents: maxSeq,
+          blockTypes: Object.fromEntries(unknownTypes),
+          // 2026-11-24 本机改动（每次换阿记的包都要重做这一处，见 docs/LOCAL-PATCHES.md）：
+          // 原来 rows 为 0 时只写 `null`，把 carried/fresh 一起丢掉。那让「用户的规矩被
+          // 整块压丢」和「这段本来就没有规矩」在报告里长得一模一样 —— 0.4.5 那种接线
+          // 静默失效重演时，看报告根本发现不了。
+          // 现在永远写完整对象：rows=0 时也带着 carried/fresh，并给一句 verdict 分清是哪种。
+          constraints: {
+            ...constraintInfo,
+            verdict:
+              constraintInfo.rows.length > 0
+                ? 'ok'
+                : constraintInfo.carried > 0
+                  ? 'carried-only' // 上次有约束、这次没抽到新的：可能是抽取失效，也可能真没新规矩
+                  : 'none', // 没带到也没抽到：这段历史里确实没有可抽的规矩
+          },
         }),
       )
       return {
         ...result,
-        entries: projected.entries,
+        entries,
         capped: after > cap,
-        stats: { ...base.stats, ...generous.stats, tokens: after, entries: projected.entries.length },
+        stats: { ...base.stats, ...generous.stats, tokens: after, entries: entries.length },
         linear: {
           baseTokens,
           generousTokens,
@@ -380,6 +463,11 @@ export class FishLinearEngine extends DefaultEngine {
           mid: projected.stats.mid,
           far: projected.stats.far,
           indexWords: projected.stats.indexWords,
+          constraints: constraintInfo.rows.length,
+          constraintCarried: constraintInfo.carried,
+          constraintFresh: constraintInfo.fresh,
+          constraintTokens,
+          alert: alertText !== '',
         },
       }
     } catch (error) {
