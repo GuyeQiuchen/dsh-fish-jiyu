@@ -56,6 +56,15 @@ const estimateTokens = COMPILER.estimateEntryTokens ?? ((text) => String(text ??
 const PROVIDER = 'dsh-fish-jiyu'
 const MODEL = 'jiyu-v1'
 
+/**
+ * 草稿类型：这些块里是模型的思考过程，不是正文。
+ *
+ * 它们本来就该被排除（0.4.11 起白名单只收 `text`），所以不算"未知格式"、不该报警。
+ * 单独列出来是为了让 `unknownTypesOf` 能分清「我故意不要的」和「我不认识的」——
+ * 后者才是需要上报的东西。
+ */
+const DRAFT_TYPES = new Set(['reasoning', 'thinking'])
+
 /** 最近几块永远保原文，留给「刚才那段话」。 */
 const DEFAULT_NEAR_BLOCKS = 3
 /** 中段一行事实的最大字符数。 */
@@ -123,6 +132,17 @@ function textOf(message) {
 /**
  * 数出这条消息里「不在白名单内、但有文本」的块，按类型累计字符。
  * 用途：压缩时上报，避免宿主换了块类型而我们静默丢内容。
+ *
+ * 2026-11-24 修（阿记在 0.4.14 里定位的同一个缺陷）：
+ * 原来只跳过 `text`，于是 `reasoning` / `thinking` 这两种**我们自己主动排除的草稿**
+ * 也被当成"未知格式"上报，检查点顶上会顶一行「未知块类型未纳入上下文：reasoning …」，
+ * 还叫我去确认它是不是新格式 —— 而我知道它是什么。
+ * 假警报的代价不在当天：一天来一次，我就会学着忽略这个警报；等宿主真加了新类型，
+ * 它跟假的一模一样，那就没人看了。
+ *
+ * 本机日志实测块类型（2026-11-24，约 49000 事件）：text 9682 块、reasoning 6078 块 2.54M 字、
+ * tool-call 4604、tool-addition 66、image 176、tool-removal 29。有文本的只有 text 和 reasoning。
+ *
  * @param message - 消息对象。
  * @param into - 累加用的 Map<类型, 字符数>。
  */
@@ -134,6 +154,8 @@ function unknownTypesOf(message, into) {
     if (typeof block.text !== 'string' || block.text === '') continue
     const type = String(block.type ?? '(无类型)')
     if (type === 'text') continue
+    // 已知的草稿类型：我们主动排除它们，不是格式问题，不该报警
+    if (DRAFT_TYPES.has(type)) continue
     into.set(type, (into.get(type) ?? 0) + block.text.length)
   }
 }
