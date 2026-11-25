@@ -71,6 +71,15 @@ const DEFAULT_NEAR_BLOCKS = 3
 const DEFAULT_MID_MAX = 140
 /** 远段每块最多几个关键词。 */
 const DEFAULT_FAR_WORDS = 6
+/**
+ * 二分找 keep 时的软上限（占 target 的比例）。
+ *
+ * 2026-11-24 从写死的 0.95 改成配置项，默认 0.85：
+ * 0.95 等于近段吃掉 95%，中段/远段/索引只能抢剩下的 5%。
+ * 阿记那边实测 5% ≈ 3440 token，而索引 + 中段 + 远段 ≈ 5k，根本装不下。
+ * 降到 0.85 的代价是近段少 3–5 轮原文。
+ */
+const DEFAULT_KEEP_LINE = 0.85
 /** vcc 的检查点上限兜底值（它自己的默认）。 */
 const DEFAULT_CAP = 65536
 /** 近段逐条渲染的放宽尺度：比 vcc 默认的 512/1024 宽，近段更接近原话。 */
@@ -396,6 +405,11 @@ export class FishLinearEngine extends DefaultEngine {
         nearBlocks: DEFAULT_NEAR_BLOCKS,
         midMax: DEFAULT_MID_MAX,
         farWords: DEFAULT_FAR_WORDS,
+        // 2026-11-24 加：二分找 keep 时的软上限。旧值写死 0.95，等于近段吃掉 95%，
+        // 留给索引 + 中段 + 远段只剩 5%；阿记那边实测那 5% ≈ 3440 token，
+        // 而索引 2.5k + 中段 1k + 远段 1.4k ≈ 5k —— 早就超了，远段只能是零。
+        // 改成 0.85 之后中段和远段才稳定有位置。配置项：settings 里的 nearKeepLine。
+        keepLine: clampRatio(Number(this.config?.nearKeepLine ?? DEFAULT_KEEP_LINE)),
       })
       // —— 约束区：紧跟在投影之后拼在最前。它不参与折叠，只继承 + 新抽。
       // 抽不出东西就是空串，一个字都不占，也不会改变原有行为。
