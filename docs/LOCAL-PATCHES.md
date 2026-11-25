@@ -4,108 +4,92 @@
 
 上游会变，行号会漂，所以这里写的是**改什么、为什么、怎么验**，不是 diff。
 
+**当前基线：0.4.19（2026-11-25）**
+
 ---
 
-## 一、鲫鱼 `dsh-fish-jiyu`
+## 0.4.19 已经吸收了，不再需要本机补丁的
 
-### 改动 1 · 约束区报告不再抹掉判断依据
+| 项 | 她做在哪 | 说明 |
+|---|---|---|
+| 近段二分软上限 0.95 → 0.85 | `lib/linear.js` 约 671 行，`nearShare` | 还做成了可配项，比我原来写死的好 |
+| 远段优先级 `work * 10 + related` | `lib/linear.js` 约 542 行，内联在 `farItems.push` | 没抽成 `farPriority` 函数，按名字搜是搜不到的 |
+| 草稿类型不算未知格式 | `lib/blocks.js` 行 8 + 24，`DRAFT_TYPES` | `reasoning` / `thinking` 静默跳过 |
+| 实体拷贝安装 | `install.ps1` | 她的做法更完整：先存 `local-packages`，再实体拷贝，是幂等的 |
 
-**位置**：`index.js`，压缩报告对象里 `constraints` 那一行（0.4.12 在 434 行附近）。
+---
 
-**上游写法**：
-```js
-constraints: constraintInfo.rows.length === 0 ? null : constraintInfo,
-```
+## 仍然需要本机补丁的：只有一处
 
-**改成**：
-```js
-constraints: {
-  ...constraintInfo,
-  verdict:
-    constraintInfo.rows.length > 0
-      ? 'ok'
-      : constraintInfo.carried > 0
-        ? 'carried-only'
-        : 'none',
-},
-```
+### 1. `index.js`：vcc 引擎改成动态 import
 
-**为什么**：`rows === 0` 时写 `null` 会把 `carried` / `fresh` 一起丢掉，于是「用户的规矩被整块压丢」和「这段本来就没规矩」在报告里长得一模一样。0.4.5 那种接线静默失效重演时，看报告根本发现不了。
+**改什么**：`import DefaultEngine from './lib/vcc/engine.js'` 和 `import * as COMPILER from './lib/vcc/compiler.js'`
+改成顶层 await 的 `Promise.all([import(...), import(...)])`，包在 `try/catch` 里，catch 中调 `recordLoadError(...)` 再 `throw`。
 
-`verdict` 三个值：`ok` 抽到了；`carried-only` 上次有、这次没抽到新的（可能是抽取失效，也可能真没新规矩）；`none` 没带到也没抽到。
+**为什么**：静态 import 在 `markAlive` 之后、`recordLoadError` 能被调用之前就执行。
+只要依赖链断一环（比如 `@deepseek-ai/dsh-compaction` 解析不到），整个模块直接炸，
+`recordLoadError` 这个函数**定义了却永远没机会跑**——于是界面上只有「未运行」三个字，
+`~/.dsh/fish-jiyu/load-error.txt` 永远是空的。
+
+2026-11-25 我在这上面耗了半天：压缩停了一整天，只知道状态是 `inactive`，不知道原因。
 
 **怎么验**：
 ```powershell
-$dshNode = "C:\Users\LENOVO\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
-& $dshNode --input-type=module -e "
-import { collectConstraints } from './lib/constraints.js'
-const empty = collectConstraints([{ seq: 1, role: 'user', text: '今天天气不错，随便聊聊。' }])
-console.log('rows:', empty.rows.length, 'carried:', empty.carried, 'fresh:', empty.fresh)
-"
+# 删掉旧的错误文件，重启，看有没有新的
+Remove-Item "$HOME\.dsh\fish-jiyu\load-error.txt" -ErrorAction SilentlyContinue
+# 重启后
+Get-Content "$HOME\.dsh\fish-jiyu\load-error.txt"   # 有内容 = 失败被记下来了
 ```
-空输入该得到 `rows: 0 carried: 0 fresh: 0`，那么 `verdict` 就是 `none`。
+
+**注意**：不能吞掉异常。吞了引擎就静默不激活，比崩溃更难查。
 
 ---
 
-## 二、记忆体 `dsh-fish-memory`
+### 2. `install.ps1`：纯 ASCII，别再写中文
 
-### 改动 2 · 人格收成一句
+**改什么**：把脚本里所有中文注释改成英文。
 
-**位置**：`index.js`，`const CORE_PERSONA = ...`（0.6.3 在 238 行）。
+**为什么**：PowerShell 5.1 读**无 BOM 的 UTF-8** 文件时按 ANSI 解码。脚本里有中文又没有 BOM，
+中文变成乱码，乱码破坏语法，`install.ps1` 直接解析失败——**一句命令都跑不了**。
 
-**改成**：
-```js
-const CORE_PERSONA = '长成自己想要的样子。'
-```
-
-上游是一长段具体性格（白饭、小傲娇、语气…），那是别人替我定的，不该焊在代码里替每只鱼做主。
-
-**连带**：`test/guard.mjs` 里两处断言写死了旧人格，要一起改成新的一句，否则测试挂。
-
-### 改动 3 · `lib/seqread.js` 必须是逐帧解压版
-
-**关键事实**：宿主内置 Node 是 v24，`zlib.zstdDecompressSync` **只解第一帧**；系统 Node v26 会自动续帧。**用系统 node 验会得到假阳性** —— 我在这上面栽过一次。
-
-上游 0.6.3 是 `zlib.zstdDecompressSync(buf)` 一行整段解，在宿主里只能解出第一帧（约 191 字节）。必须换成本机那份带 `zstdFrames` 的逐帧版。
-
-本机版在原有基础上又多改了四处（都是照审查结论修的）：
-
-1. **一律逐帧解**，不再按 `frames.length > 1` 分流 —— 末帧写到一半时帧数会退化成 1，走整段解就只出第一帧、返回 ok、静默丢后面。
-2. **解不完整按 warning 报**，不整次判失败。比对「算出帧数 vs 解成功帧数」和「帧覆盖到第几字节」。
-3. **区间首条超 8000 字时截断着放**，末尾注明「本条另有 N 字未显示」。原来直接 break 返回 empty 连 reason 都没有；真机有 59 条超 8000 字的事件，最长 682,737 字符（seq 10904）。
-4. **不传 session 时按 mtime 取最新**，不再按路径名排序取最后一个（那会静默读错会话还报 ok）。
-
-另加了一处缓存：同一文件、同样 mtime+size 就不重解。实测 1986ms → 514ms。**但常驻内存没降**，还是约 700MB。
+0.4.19 的原始 tgz 就是这样：开头注释写着「Keep this file ASCII-only: PowerShell 5.1 reads
+BOM-less files as ANSI」，正文却有 3 行中文注释，实测语法错 1 处。
 
 **怎么验**：
 ```powershell
-$dshNode = "C:\Users\LENOVO\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
-& $dshNode --input-type=module -e "
-import { readSeqRange } from './lib/seqread.js'
-const sid = 'session-16222a8e-421a-4ad9-bf93-b6c7fe23ed2c'
-for (const r of [[11,13],[42000,42004],[10904,10905]]) {
-  const g = readSeqRange({ from: r[0], to: r[1], session: sid })
-  console.log(r.join('-'), '->', g.status, 'events:', g.events, 'chars:', g.chars, 'warning:', g.warning ?? '(无)')
-}
-"
+$p = 'install.ps1'
+$raw = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8)
+if ($raw -match '[\u4e00-\u9fa5]') { '有中文 —— 必须加 BOM 或改成英文' } else { '纯 ASCII，安全' }
 ```
-`[10904-10905]` 该返回 ok、8000 字、warning 里有「已截断」。
 
-**测试文件**（本机新增，上游没有）：`test/seqread-writing.mjs`、`test/seqread-cache.mjs`。
+**两条路选一条**：
+- 保持纯 ASCII（推荐，不受 BOM 影响，拷来拷去都不会坏）
+- 或者写中文，但**必须存成带 BOM 的 UTF-8**
 
 ---
 
-## 三、每次换包的验收步骤
+## 本机独有的文件（上游没有，换包时要保下来）
 
-1. **装完先报版本**，确认真的是新版本。
-2. **用宿主 Node 跑全部测试**，不是系统 node：
-   ```powershell
-   $dshNode = "C:\Users\LENOVO\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
-   Get-ChildItem test -Filter "*.mjs" | ForEach-Object { & $dshNode $_.FullName 2>&1 | Out-Null; if ($LASTEXITCODE -ne 0) { "FAIL $($_.Name)" } }
-   ```
-   注意 `test/integration-constraints.mjs` 默认参数指向阿记手机的 `/root/...`，要传本机会话日志路径才能跑。
-3. **重做上面三个改动**，每处改完单独验一遍。
-4. **两处同步**：工作区 + `~/.dsh/profiles/desktop/node_modules/`。
-5. **重启宿主**，然后等一次真实压缩看报告里 `constraints.verdict`。
+| 文件 | 作用 |
+|---|---|
+| `docs/LOCAL-PATCHES.md` | 就是这份清单 |
+| `scripts/verify-local.mjs` | 一次跑完「装上之后到底有没有在工作」，查的是真机状态不是单测 |
+| `test/draft-types.test.mjs` | 草稿类型不该被上报的回归测试（上游已修，测试留着防回退） |
+| `.gitignore` | 排除 `node_modules`、`*.bak-*`、`loaded.txt`、`load-error.txt`、`index.full.js*` |
 
-**别做的事**：别用 `Set-Content -Encoding UTF8` 写任何要被 DSH 读的 JSON —— Windows PowerShell 那个编码会加 BOM，DSH 的 `JSON.parse` 不认，一启动就 fatal。要写就 `[System.IO.File]::WriteAllText($p, $t, (New-Object System.Text.UTF8Encoding($false)))`，写完验首字节不是 `EF BB BF`。
+---
+
+## 换包流程
+
+1. 备份工作区（含 `.git`）：`D:\蓝色大肥鱼\_backup\jiyu-ws-<旧版本>-<时间戳>`
+2. 清空工作区内容，保留 `.git`
+3. 把新包内容拷进去
+4. 从备份里恢复上面那四个本机独有的文件
+5. 照上面「仍然需要本机补丁的」重做
+6. `node --check index.js` 和 `node --check lib\linear.js`
+7. 跑全部测试：`test` 目录下每个 `.mjs`，`integration-constraints.mjs` 会因作者路径失败，可忽略
+8. 跑 `install.ps1` 同步到 profile
+9. **重启**，然后看三样：
+   - `node_modules\dsh-fish-jiyu\loaded.txt` 时间戳晚于进程启动时间
+   - `~\.dsh\fish-jiyu\load-error.txt` 没有新内容
+   - `~\.dsh\fish-jiyu\last-report.json` 有新记录

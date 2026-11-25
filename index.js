@@ -15,7 +15,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { assignBlocks, projectRegion, buildIndexLine, resultDigest, stripReminders, sessionAlert, unknownAlert } from './lib/linear.js'
+import { unknownTypesOf } from './lib/blocks.js'
+import { assignBlocks, projectRegion, buildIndexLine, resultDigest, stripReminders, sessionAlert, unknownAlert, DEFAULT_NEAR_SHARE, DEFAULT_FAR_SHARE } from './lib/linear.js'
 // —— 决策报告（可删）：写一份 last-report.json，供 jiyu_inspect 读。
 import { makeReport, writeReport } from './lib/report.js'
 // —— 约束区（可删）：把用户明确要求单独留一块，不参与折叠。
@@ -46,8 +47,25 @@ function recordLoadError(what, error) {
   }
 }
 
-import DefaultEngine from './lib/vcc/engine.js'
-import * as COMPILER from './lib/vcc/compiler.js'
+// 2026-11-25 为什么必须是动态 import：
+// 这两个模块的依赖链断在宿主树上时（`@deepseek-ai/dsh-compaction` 只存在于 app.asar），
+// 静态 import 会让整个模块在 `markAlive` 之后、`recordLoadError` 能被调用之前就炸掉——
+// 下面那个函数定义了却永远没机会执行，于是界面上只有「未运行」三个字，定位成本极高。
+// 改成顶层 await + try：失败先落盘 `~/.dsh/fish-jiyu/load-error.txt`，再照常抛
+// （不能吞——吞了引擎就静默不激活，比崩溃更难查）。
+let DefaultEngine
+let COMPILER
+try {
+  const [engineModule, compilerModule] = await Promise.all([
+    import('./lib/vcc/engine.js'),
+    import('./lib/vcc/compiler.js'),
+  ])
+  DefaultEngine = engineModule.default
+  COMPILER = compilerModule
+} catch (error) {
+  recordLoadError('加载 lib/vcc（引擎或编译器）失败', error)
+  throw error
+}
 
 /** vcc 的编译器：借它的逐条渲染（工具一行、噪声剥除、检查点识别），不借它的截断尺度。 */
 const estimateTokens = COMPILER.estimateEntryTokens ?? ((text) => String(text ?? '').length)
@@ -56,30 +74,12 @@ const estimateTokens = COMPILER.estimateEntryTokens ?? ((text) => String(text ??
 const PROVIDER = 'dsh-fish-jiyu'
 const MODEL = 'jiyu-v1'
 
-/**
- * 草稿类型：这些块里是模型的思考过程，不是正文。
- *
- * 它们本来就该被排除（0.4.11 起白名单只收 `text`），所以不算"未知格式"、不该报警。
- * 单独列出来是为了让 `unknownTypesOf` 能分清「我故意不要的」和「我不认识的」——
- * 后者才是需要上报的东西。
- */
-const DRAFT_TYPES = new Set(['reasoning', 'thinking'])
-
 /** 最近几块永远保原文，留给「刚才那段话」。 */
 const DEFAULT_NEAR_BLOCKS = 3
 /** 中段一行事实的最大字符数。 */
 const DEFAULT_MID_MAX = 140
 /** 远段每块最多几个关键词。 */
 const DEFAULT_FAR_WORDS = 6
-/**
- * 二分找 keep 时的软上限（占 target 的比例）。
- *
- * 2026-11-24 从写死的 0.95 改成配置项，默认 0.85：
- * 0.95 等于近段吃掉 95%，中段/远段/索引只能抢剩下的 5%。
- * 阿记那边实测 5% ≈ 3440 token，而索引 + 中段 + 远段 ≈ 5k，根本装不下。
- * 降到 0.85 的代价是近段少 3–5 轮原文。
- */
-const DEFAULT_KEEP_LINE = 0.85
 /** vcc 的检查点上限兜底值（它自己的默认）。 */
 const DEFAULT_CAP = 65536
 /** 近段逐条渲染的放宽尺度：比 vcc 默认的 512/1024 宽，近段更接近原话。 */
@@ -138,36 +138,6 @@ function textOf(message) {
   return parts.join('\n')
 }
 
-/**
- * 数出这条消息里「不在白名单内、但有文本」的块，按类型累计字符。
- * 用途：压缩时上报，避免宿主换了块类型而我们静默丢内容。
- *
- * 2026-11-24 修（阿记在 0.4.14 里定位的同一个缺陷）：
- * 原来只跳过 `text`，于是 `reasoning` / `thinking` 这两种**我们自己主动排除的草稿**
- * 也被当成"未知格式"上报，检查点顶上会顶一行「未知块类型未纳入上下文：reasoning …」，
- * 还叫我去确认它是不是新格式 —— 而我知道它是什么。
- * 假警报的代价不在当天：一天来一次，我就会学着忽略这个警报；等宿主真加了新类型，
- * 它跟假的一模一样，那就没人看了。
- *
- * 本机日志实测块类型（2026-11-24，约 49000 事件）：text 9682 块、reasoning 6078 块 2.54M 字、
- * tool-call 4604、tool-addition 66、image 176、tool-removal 29。有文本的只有 text 和 reasoning。
- *
- * @param message - 消息对象。
- * @param into - 累加用的 Map<类型, 字符数>。
- */
-function unknownTypesOf(message, into) {
-  const content = message?.content
-  if (!Array.isArray(content) || into === undefined) return
-  for (const block of content) {
-    if (block === null || typeof block !== 'object') continue
-    if (typeof block.text !== 'string' || block.text === '') continue
-    const type = String(block.type ?? '(无类型)')
-    if (type === 'text') continue
-    // 已知的草稿类型：我们主动排除它们，不是格式问题，不该报警
-    if (DRAFT_TYPES.has(type)) continue
-    into.set(type, (into.get(type) ?? 0) + block.text.length)
-  }
-}
 
 /**
  * 把待压区段的节点整理成块划分的输入。
@@ -405,11 +375,9 @@ export class FishLinearEngine extends DefaultEngine {
         nearBlocks: DEFAULT_NEAR_BLOCKS,
         midMax: DEFAULT_MID_MAX,
         farWords: DEFAULT_FAR_WORDS,
-        // 2026-11-24 加：二分找 keep 时的软上限。旧值写死 0.95，等于近段吃掉 95%，
-        // 留给索引 + 中段 + 远段只剩 5%；阿记那边实测那 5% ≈ 3440 token，
-        // 而索引 2.5k + 中段 1k + 远段 1.4k ≈ 5k —— 早就超了，远段只能是零。
-        // 改成 0.85 之后中段和远段才稳定有位置。配置项：settings 里的 nearKeepLine。
-        keepLine: clampRatio(Number(this.config?.nearKeepLine ?? DEFAULT_KEEP_LINE)),
+        // 近段上限 / 远段上限（0.4.16）：都可配，默认 0.85 / 0.15。
+        nearShare: Number(this.config?.nearShare ?? DEFAULT_NEAR_SHARE),
+        farShare: Number(this.config?.farShare ?? DEFAULT_FAR_SHARE),
       })
       // —— 约束区：紧跟在投影之后拼在最前。它不参与折叠，只继承 + 新抽。
       // 抽不出东西就是空串，一个字都不占，也不会改变原有行为。
@@ -467,20 +435,7 @@ export class FishLinearEngine extends DefaultEngine {
           seqTo: seqs.length ? seqs.reduce((a, b) => (a > b ? a : b)) : 0,
           sessionEvents: maxSeq,
           blockTypes: Object.fromEntries(unknownTypes),
-          // 2026-11-24 本机改动（每次换阿记的包都要重做这一处，见 docs/LOCAL-PATCHES.md）：
-          // 原来 rows 为 0 时只写 `null`，把 carried/fresh 一起丢掉。那让「用户的规矩被
-          // 整块压丢」和「这段本来就没有规矩」在报告里长得一模一样 —— 0.4.5 那种接线
-          // 静默失效重演时，看报告根本发现不了。
-          // 现在永远写完整对象：rows=0 时也带着 carried/fresh，并给一句 verdict 分清是哪种。
-          constraints: {
-            ...constraintInfo,
-            verdict:
-              constraintInfo.rows.length > 0
-                ? 'ok'
-                : constraintInfo.carried > 0
-                  ? 'carried-only' // 上次有约束、这次没抽到新的：可能是抽取失效，也可能真没新规矩
-                  : 'none', // 没带到也没抽到：这段历史里确实没有可抽的规矩
-          },
+          constraints: constraintInfo.rows.length === 0 ? null : constraintInfo,
         }),
       )
       return {

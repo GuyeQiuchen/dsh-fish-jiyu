@@ -84,9 +84,9 @@ if ($bundles -notcontains 'dsh-fish-jiyu') {
 }
 [System.IO.File]::WriteAllText($pkgPath, ($pkg | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
 
-# 4) cordis.patch.yml: 只做「关掉别的压缩引擎」。
-#    条目由包自带的 bundle 插入；脚本再插一份会重名（DSH 对重复 id 会报冲突）。
-#    全新 profile 可能还没有这个文件，没有就跳过。
+# 4) cordis.patch.yml: only disable the other compaction engine.
+#    The jiyu row itself comes from the bundle; inserting it here too would
+#    create a duplicate id (DSH reports a conflict on duplicate ids),
 if (Test-Path $patchPath) {
   $patch = [System.IO.File]::ReadAllText($patchPath, [System.Text.Encoding]::UTF8)
   if ($patch.Length -lt 100) { throw "cordis.patch.yml looks empty ($($patch.Length) chars); aborting" }
