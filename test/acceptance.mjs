@@ -4,7 +4,7 @@
  *   2. 近段原文还在、中段有事实行、远段有关键词 + 指针；
  *   3. 关键词索引能把远段的旧问题指回原块（取回率）。
  *
- * 用法：node test/linear.test.mjs [session.v4.jsonl.zstd]
+ * 用法：node test/acceptance.mjs [session.v4.jsonl.zstd]
  */
 import { parseEvents, toNodes } from './session.mjs'
 import { assignBlocks, projectRegion, matchIndex, extractKeywords, factLine } from '../lib/linear.js'
@@ -13,12 +13,19 @@ const DEFAULT_SESSION =
   ''
 
 const VCC_COMPILER =
-  new URL('../lib/vcc/compiler.js', import.meta.url).href
+  new URL('../lib/compiler/tokens.js', import.meta.url).href
 
 const { estimateEntryTokens } = await import(VCC_COMPILER)
 
 const sessionFile = process.argv[2] ?? DEFAULT_SESSION
 if (sessionFile === '') {
+  // 2026-11-27：以前这里 `process.exit(0)`，`node --test` 会把它记成 1 个「通过」，
+  // 于是 160/160 里混着一个什么都没断言的文件（审查 A9）。
+  // 现在显式登记成 skipped，通过数才是真的。
+  if (process.env.NODE_TEST_CONTEXT !== undefined) {
+    const { test } = await import('node:test')
+    test('真实会话验收（需要传会话文件）', { skip: '需要传一个会话文件路径' })
+  }
   console.log('跳过 ' + import.meta.url.split('/').pop() + '：这不是自动测试，需要传一个会话文件路径')
   process.exit(0)
 }
@@ -40,6 +47,10 @@ function check(name, ok, detail = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail === '' ? '' : `  ${detail}`}`)
 }
 
+// 2026-11-27：生产走 plan（0.4.32 起配置真的传得下去了）。
+// 默认就跟生产一致；要对照旧路径用 --engine=time。
+const engineArg = process.argv.find((a) => a.startsWith('--engine='))
+const ENGINE = engineArg === undefined ? 'plan' : engineArg.slice('--engine='.length)
 const blocks = assignBlocks(nodes, { titleChars: 24, maxQuotes: 3 })
 const before = sumTokens(entries)
 const targetTokens = Math.floor(before * 0.35)
@@ -51,10 +62,11 @@ const result = projectRegion({
   nearBlocks: 3,
   midMax: 140,
   farWords: 6,
+  engine: ENGINE,
 })
 
 const after = result.stats.tokens
-console.log(`\n会话：${sessionFile.split('\\').at(-2)}`)
+console.log(`\n会话：${sessionFile.split('\\').at(-2)}（路径 ${ENGINE}）`)
 console.log(`节点 ${nodes.length} · 块 ${blocks.length} · 条目 ${entries.length}`)
 console.log(`token：${before} → ${after}（目标 ${targetTokens}，压到 ${((after / before) * 100).toFixed(1)}%）`)
 console.log(`条目：near ${result.stats.near} · mid ${result.stats.mid} · far ${result.stats.far} · 索引词 ${result.stats.indexWords}`)
@@ -76,7 +88,9 @@ check('存在全局关键词索引', indexEntry !== undefined)
 const covered = new Set()
 for (const entry of result.entries) {
   for (const block of blocks) {
-    if (entry.seq >= block.startSeq - 2 && entry.seq <= block.endSeq + 2) covered.add(block.startSeq)
+    // 精确判定：[startSeq, endSeq)，和分桶、和「有落脚点」的定义一致。
+    // 原来的 ±2 松窗口会把「下一块首条 seq = 本块 endSeq」的漏覆盖放过去。
+    if (entry.seq >= block.startSeq && entry.seq < block.endSeq) covered.add(block.startSeq)
   }
 }
 const userBlocks = blocks.filter((block) => block.quotes.length > 0)
@@ -135,7 +149,7 @@ console.log(indexText.slice(0, 500))
 
 // 冻结点：把上一次投影的结果再投一次，同一块的行必须逐字节不变。
 // 变了就是前缀缓存作废，早期内容也跟着漂。
-const again = projectRegion({ entries: result.entries, blocks, targetTokens, estimate, nearBlocks: 3, midMax: 140, farWords: 6 })
+const again = projectRegion({ entries: result.entries, blocks, targetTokens, estimate, nearBlocks: 3, midMax: 140, farWords: 6, engine: ENGINE })
 const lineMap = (list) =>
   new Map(
     list

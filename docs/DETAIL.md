@@ -10,9 +10,9 @@ vcc 会把历史压成「检查点正文」，而检查点自己又进下一轮�
 
 ## 怎么工作
 
-自带引擎：`lib/vcc/` 是从 dsh-compaction-vcc（MIT）搬进来的六个文件（引擎、编译器、区域选择、会话兼容、预设检查、影子检查），所以**不需要另装 vcc**。宿主内核只提供四个包：`@deepseek-ai/dsh-compaction`、`dsh-llm`、`dsh-util-values`、`schemastery`，那是本体自带的。
+自带引擎与编译器：`lib/engine/`（触发、事务、区间选择、surface 协议）与 `lib/compiler/`（条目渲染、词元、噪声、检查点）都在本包内，所以**不需要另装 vcc**。宿主内核只提供四个包：`@deepseek-ai/dsh-compaction`、`dsh-llm`、`dsh-util-values`、`schemastery`，那是本体自带的（`lib/host.js` 是唯一的适配入口）。
 
-从它那里沿用三样东西：触发与事务通道（父类那套 surface 协议）、旧检查点识别、逐条渲染器（工具一行、噪声剥除）。**条目本身由本引擎按放宽的尺度重新编**——它默认把每段正文截到 512/1024 token，这里放宽到 2048/4096，所以近段拿到的是接近原话的行，而不是已经截过一遍的产物。上游改动不会自动跟过来，DSH 接口变了要手动同步 `lib/vcc/`。来源、我们的偏离、依赖的宿主接口和维护约定另见 [`vcc-fork.md`](vcc-fork.md)（2026-11-22 立）。
+内核最初搬自 dsh-compaction-vcc（MIT，2026-11-27 起由本包接管维护，`lib/vcc/` 已删除）：触发与事务通道沿用它的做法，条目渲染则由 `lib/compiler/` 按放宽的尺度自己编（每段正文 2048/4096 token），所以近段拿到的是接近原话的行。来源、偏离与许可约定见 [`vcc-fork.md`](vcc-fork.md)。
 
 预算是挂在**触发线**上的，不是挂在检查点上限上：上限的一半比触发线还高，压完人还在触发线上头，会一压再压。现在取「上限 × `thresholdRatio` × 0.5」做目标，再用「实际可用体积的 85%」压一层——压完落回线下，也不会超过 vcc 的产物体积。然后从最近几块开始往里加原文，加到预算为止，剩下的按距离退档：
 
@@ -107,7 +107,7 @@ AI 也可以用 `jiyu_inspect` 工具拿同一份数据，两条路读同一个�
 
 ## 边界与已知限制
 
-- 沿用 dsh-compaction-vcc（MIT）的 `compile()` 扩展点和 `compileNodes` / `estimateEntryTokens` 的估算尺度；代码已搬进 `lib/vcc/`，不另装 vcc，宿主接口变了要手动同步那六个文件。
+- 引擎内核源自 dsh-compaction-vcc（MIT），现由本包接管：`lib/engine/` 与 `lib/compiler/`；宿主接口集中在 `lib/host.js`，宿主换版只改这一处。
 - 与 vcc、fold、basic 四选一：同一个 `ctx.compaction` 只能有一个实现。本包的 bundle patch 会关掉 `compaction-fold` 与 `compaction-basic`；旧 profile 里若还开着 `compaction-vcc`，`install.sh` / `install.ps1` 会顺手关掉它。
 - 只在本机（DSH 2.36 + vcc 0.7.4）验证过；换机器、换模型窗口不受影响，但阈值要按窗口比例配。
 - 中段事实行由规则抽取，不做模型改写：它负责导航，不负责复述；要细节就按 seq 取原文。
@@ -127,7 +127,7 @@ lib/linear.js        投影纯函数（分块、分档、关键词、索引、�
 cordis.patch.yml     profile 补丁（关 vcc/fold，insert compaction-jiyu）
 locale/{zh,en}.json  插件市场条目文案（title / description / detail）
 docs/DETAIL.md       本文件
-test/jiyu.test.mjs   离线对照测试（真实会话日志 → 投影 → 取回率）
+test/acceptance.mjs   离线对照测试（真实会话日志 → 投影 → 取回率）
 test/calibrate.mjs   新管线离线校准（重编 → 三档投影，打印数字）
 test/session.mjs     会话日志解码（zstd 多帧）
 install.ps1          装进 profile（带时间戳备份）
@@ -155,7 +155,7 @@ uninstall.ps1        回滚到 vcc
 
 脚本：`test/calibrate.mjs <会话目录名>`，区间用 `JIYU_SEQ_LO` / `JIYU_SEQ_HI` 环境变量。
 
-旧管线的对照数字（2026-11-17，那时是压 vcc 的产物，见 `test/jiyu.test.mjs`）：
+旧管线的对照数字（2026-11-17，那时是压 vcc 的产物，见 `test/acceptance.mjs`）：
 
 | 会话 | 节点 | 块 | token | 近 / 中 / 远 | 远段关键词取回 |
 | --- | --- | --- | --- | --- | --- |

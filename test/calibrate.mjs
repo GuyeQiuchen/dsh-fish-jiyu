@@ -11,7 +11,7 @@ import { parseEvents, eventText } from './session.mjs'
 import { assignBlocks, projectRegion, resultDigest } from '../lib/linear.js'
 
 const COMPILER_URL =
-  new URL('../lib/vcc/compiler.js', import.meta.url).href
+  new URL('../lib/compiler/tokens.js', import.meta.url).href
 const {
   compileNodes,
   compileRegion,

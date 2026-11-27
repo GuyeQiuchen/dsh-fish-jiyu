@@ -75,3 +75,17 @@
 ## 六、为什么没有跟着上游走
 
 上游的改动是为他们那套引擎服务的。我们只借用「引擎注册 + 会话编译」这层地基，投影、取回、报告都是自己的。跟着上游 merge，等于让别人的假设覆盖自己的设计；跟着看宿主源码，拿到的是同一份一手信息，还不会引入不匹配。
+
+## 2026-11-27：编译器已换掉
+
+`lib/vcc/compiler.js` 不再被生产代码引用（条目渲染、词元估算、噪声剥除、检查点折叠都在 `lib/compiler/`）。
+引擎 `lib/vcc/engine.js` 仍在用。等引擎也换完、确认零引用后再删本目录并撤许可声明。
+
+## 2026-11-27：引擎也搬进来了，lib/vcc 已删除
+
+`lib/engine/` 里的 `base.js`、`region.js`、`preset-check.js`、`shadow-check.js`、`session-compat.js`
+是 vcc 引擎内核的移植：行为未改，只把 `@deepseek-ai/*` 的 import 收敛到 `lib/host.js` 一处。
+编译器的同名实现已在 0.4.27 换成 `lib/compiler/`（自己写的）。
+
+许可：本目录的移植代码仍属 MIT 派生，`LICENSE` 与本文保留署名；README 的产品文案不提 vcc。
+影子对照：`tools/shadow-compare.mjs` 用 0.4.28 的 tgz 当基线，比配置解析、引擎形状、编译与投影。

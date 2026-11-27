@@ -1,14 +1,28 @@
 # 鲫鱼（dsh-fish-jiyu）
 
-按时间远近把上下文投成三档的压缩引擎：**近段保原文、中段一行事实、远段只剩关键词和 seq 指针**，每轮从原始会话日志重新投影，所以不会叠摘要链；压掉的原文都能用自带工具按 seq 或关键词取回（`jiyu_search` / `jiyu_recall` / `jiyu_blocks`）。
+> 聊得再久也找得回：不调模型，比模型压缩更省 token，三段式保留让内容过渡更平滑。
 
-自带引擎和编译器：`lib/vcc/` 是从 [dsh-compaction-vcc](https://github.com/tingfeng-droid/dsh-compaction-vcc)（MIT，TsFreddie / Tingfeng）搬进来的代码，**不需要另装 vcc**（来源与偏离见 [`docs/vcc-fork.md`](docs/vcc-fork.md)）。触发时机、保留区、事务回滚、surface 协议沿用它的做法，投影那一步（`compile()`）是鲫鱼自己的；条目由本引擎按放宽的尺度自己编，所以近段接近原话。
+按时间远近把上下文投成三档：近段保原文，中段每块一行事实行，远段只剩关键词与 seq 指针。每轮从原始会话日志重新投影，不累积摘要链；被折叠的原文可用 `jiyu_search` / `jiyu_recall` / `jiyu_blocks` 按关键词或 seq 取回。
+
+## 它做什么
+
+上下文接近上限时，传统做法是把旧内容摘要成一段新文本。每压一次，就多一层转述，聊得越久，离原话越远。
+
+鲫鱼不生成摘要链。它每轮从原始会话日志重新投影一次，把历史按距离分成三档渲染：
+
+- **近段**：保留条目原文，接近原话；
+- **中段**：每块一行事实行，写清标题、动过的工具、结果和收尾片段，单行有 token 上限；
+- **远段**：关键词行，配一份全局关键词索引，指向块区间。
+
+原文不会被删除，只是折叠。所以它有两个性质：不会累积失真；被折叠的内容仍可取回。
+
+引擎和编译器都在本包：`lib/engine/`（触发、事务、保留区、surface）与 `lib/compiler/`（条目渲染、词元、噪声、检查点）。内核最初搬自 [dsh-compaction-vcc](https://github.com/tingfeng-droid/dsh-compaction-vcc)（MIT，TsFreddie / Tingfeng），0.4.29 起由本包接管维护，`lib/vcc/` 已删除；来源与偏离见 [`docs/vcc-fork.md`](docs/vcc-fork.md)。投影（`compile()`）一直是鲫鱼自己的。
 
 需要 DSH 内核提供的四个包：`@deepseek-ai/dsh-compaction`、`dsh-llm`、`dsh-util-values`、`@deepseek-ai/schemastery`。这四个是宿主自带的，不用单独装。
 
 - 设计取向（改代码先读）：[docs/ORIENTATION.md](docs/ORIENTATION.md)
 - 详细说明（做什么、怎么回取、限制、验证数据）：[docs/DETAIL.md](docs/DETAIL.md)
-- 测试：`npm test`（74 个自动化用例）；真实会话回归：`node test/jiyu.test.mjs [会话日志路径]`
+- 测试：`npm test`（169 个自动化用例，含边界与契约）；真实会话回归：`node test/acceptance.mjs [会话日志路径]`
 - 校准：`JIYU_SEQ_LO=<起始seq> JIYU_SEQ_HI=<结束seq> node test/calibrate.mjs <会话目录名>`
 
 ## 取回原文
@@ -53,6 +67,8 @@ node test/integration-constraints.mjs [会话日志路径]
 脚本会把包**复制**进 profile 的 `node_modules`，同时在 profile 自己的 `local-packages/` 里留一份副本（依赖指向这份副本，所以你下载的目录之后可以删掉、挪走），并在 `package.json` 里挂上依赖和 bundle 项，关掉它替代的 vcc 引擎；改之前两份文件都带时间戳备份。装完重启 DSH。
 
 用别的 profile 名：`.\install.ps1 -Profile other` 或 `PROFILE=other ./install.sh`。
+
+**手动安装时也一样：装 tgz，或者复制成真目录；不要 `dsh plugin add <目录>`。** 目录安装会写成 `link:`，包就留在原地（例如工作区），而宿主只为物理住在 profile 里的包解析 `@deepseek-ai/*`——症状是插件外壳加载了、引擎静默不激活，或者重启后报 `ERR_MODULE_NOT_FOUND: @deepseek-ai/schemastery`（2026-11-26 在 Android 上复现过）。
 
 **必须是真目录，不能是符号链接或 junction。** 宿主只为物理住在 profile 里的包解析 `@deepseek-ai/*`；链接能加载，但引擎会静默不激活（2026-11-19 在 Windows 上验证过）。又因为依赖写成 `link:`，pnpm 下次装任何插件都会把它改回链接——所以之后再装插件，重跑一次这个脚本。
 

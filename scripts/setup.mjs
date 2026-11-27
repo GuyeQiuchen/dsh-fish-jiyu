@@ -336,6 +336,29 @@ function verify({ profileDir, pkgPath, target, patchPath, quiet = false }) {
     return 'node --check 通过'
   })
 
+  // 2026-11-27：引擎和编译器都搬进本包了（lib/engine/、lib/compiler/），
+  // 装完必须能真的 import 起来——「外壳加载、引擎静默不激活」就是这里没查。
+  check('引擎与编译器文件齐全', () => {
+    const required = [
+      'lib/engine/base.js', 'lib/engine/api.js', 'lib/engine/region.js',
+      'lib/compiler/render.js', 'lib/compiler/tokens.js', 'lib/compiler/checkpoint.js', 'lib/host.js',
+    ]
+    for (const rel of required) if (!existsSync(path.join(target, rel))) throw new Error(`缺 ${rel}`)
+    if (existsSync(path.join(target, 'lib/vcc'))) throw new Error('还有 lib/vcc（0.4.29 起已删除）')
+    return `${required.length} 个文件`
+  })
+
+  check('引擎能加载', () => {
+    // 只有 profile 里装了宿主包（@deepseek-ai/*）时这条才有意义；
+    // 临时 profile / 纯包管理场景没有宿主，跳过而不是误报。
+    if (!existsSync(path.join(profileDir, 'node_modules', '@deepseek-ai'))) return '跳过（该 profile 没有宿主包）'
+    const { execFileSync } = require('node:child_process')
+    const script = `await import(${JSON.stringify(path.join(target, 'lib/engine/base.js'))}); console.log('ok')`
+    const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 15000 })
+    if (!out.includes('ok')) throw new Error('import 没跑通')
+    return 'import 通过（宿主包可解析）'
+  })
+
   check('patch 结构', () => {
     if (!existsSync(patchPath)) return '没有 patch 文件（用 bundle 默认）'
     const result = validatePatch(readFileSync(patchPath, 'utf8'))

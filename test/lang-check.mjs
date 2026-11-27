@@ -11,7 +11,7 @@ import { assignBlocks, projectRegion, extractKeywords } from '../lib/linear.js'
 const DEFAULT_SESSION =
   ''
 const VCC_COMPILER =
-  new URL('../lib/vcc/compiler.js', import.meta.url).href
+  new URL('../lib/compiler/tokens.js', import.meta.url).href
 const { estimateEntryTokens } = await import(VCC_COMPILER)
 
 const sessionFile = process.argv[2] ?? DEFAULT_SESSION

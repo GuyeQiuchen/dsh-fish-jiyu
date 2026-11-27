@@ -1,71 +1,71 @@
 {
-    "name":  "dsh-fish-jiyu",
-    "version":  "0.4.19-su.1",
-    "type":  "module",
-    "description":  "Linear-projection context compaction for DeepSeek Harness: near history verbatim, mid as one fact line per block, far as keywords plus seq pointers; every projection is rebuilt from the raw session log, and the pristine text can be searched (jiyu_search), paged back (jiyu_recall) or listed by block (jiyu_blocks).",
-    "keywords":  [
-                     "dsh",
-                     "compaction",
-                     "context",
-                     "memory",
-                     "recall",
-                     "linear"
-                 ],
-    "main":  "index.js",
-    "exports":  {
-                    ".":  "./index.js",
-                    "./engine":  "./index.js",
-                    "./tool":  "./tool.js",
-                    "./view":  "./view.js",
-                    "./client":  "./client.js",
-                    "./lib/*":  "./lib/*",
-                    "./locale/*.json":  "./locale/*.json",
-                    "./icon":  "./icon.svg",
-                    "./package.json":  "./package.json"
-                },
-    "files":  [
-                  "index.js",
-                  "tool.js",
-                  "view.js",
-                  "client.js",
-                  "inspect.html",
-                  "lib",
-                  "cordis.patch.yml",
-                  "locale/*.json",
-                  "docs",
-                  "icon.svg",
-                  "README.md",
-                  "LICENSE",
-                  "install.ps1",
-                  "uninstall.ps1",
-                  "install.sh",
-                  "uninstall.sh",
-                  "test",
-                  "scripts"
-              ],
-    "license":  "MIT",
-    "dsh":  {
-                "bundle":  {
-                               "patch":  "./cordis.patch.yml"
-                           },
-                "client":  {
-                               "platform":  "web",
-                               "immediately":  true,
-                               "inject":  [
-                                              "slots"
-                                          ]
-                           }
-            },
-    "repository":  {
-                       "type":  "git",
-                       "url":  "git+https://github.com/GuyeQiuchen/dsh-fish-jiyu.git"
-                   },
-    "homepage":  "https://github.com/GuyeQiuchen/dsh-fish-jiyu#readme",
-    "engines":  {
-                    "node":  "\u003e=20.11"
-                },
-    "scripts":  {
-                    "test":  "node --test test/*.test.mjs",
-                    "sim":  "node scripts/sim-constraints.mjs"
-                }
+  "name": "dsh-fish-jiyu",
+  "version": "1.0.1",
+  "type": "module",
+  "description": "No model calls, cheaper than model-based compaction, three-band retention that keeps the transition smooth; folded text stays searchable (jiyu_search), pageable (jiyu_recall) and listable (jiyu_blocks).",
+  "keywords": [
+    "dsh",
+    "compaction",
+    "context",
+    "memory",
+    "recall",
+    "linear"
+  ],
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./engine": "./index.js",
+    "./tool": "./tool.js",
+    "./view": "./view.js",
+    "./client": "./client.js",
+    "./lib/*": "./lib/*",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "tool.js",
+    "view.js",
+    "client.js",
+    "inspect.html",
+    "lib",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "install.ps1",
+    "uninstall.ps1",
+    "install.sh",
+    "uninstall.sh",
+    "test",
+    "scripts"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "slots"
+      ]
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GuyeQiuchen/dsh-fish-jiyu.git"
+  },
+  "homepage": "https://github.com/GuyeQiuchen/dsh-fish-jiyu#readme",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "sim": "node scripts/sim-constraints.mjs"
+  }
 }

@@ -63,6 +63,11 @@ $rcArgs = @(
 robocopy @rcArgs | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy failed with $LASTEXITCODE" }
 Write-Host "copied: $here -> $target"
+# Since 0.4.29 the engine and compiler live inside this package. Fail here
+# instead of leaving a silently inactive engine after the next restart.
+foreach ($rel in @('lib/engine/base.js', 'lib/compiler/render.js', 'lib/host.js')) {
+  if (-not (Test-Path (Join-Path $target $rel))) { throw "install: missing $rel" }
+}
 
 # 3) package.json: dependency + bundle entry
 $pkg = Get-Content $pkgPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -84,9 +89,10 @@ if ($bundles -notcontains 'dsh-fish-jiyu') {
 }
 [System.IO.File]::WriteAllText($pkgPath, ($pkg | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
 
-# 4) cordis.patch.yml: only disable the other compaction engine.
-#    The jiyu row itself comes from the bundle; inserting it here too would
-#    create a duplicate id (DSH reports a conflict on duplicate ids),
+# 4) cordis.patch.yml: ONLY disable the other compaction engines here.
+#    The jiyu row itself is inserted by the bundle shipped in this package;
+#    adding a second copy would duplicate the id (DSH rejects duplicate ids).
+#    A fresh profile may not have this file yet; skip when absent.
 if (Test-Path $patchPath) {
   $patch = [System.IO.File]::ReadAllText($patchPath, [System.Text.Encoding]::UTF8)
   if ($patch.Length -lt 100) { throw "cordis.patch.yml looks empty ($($patch.Length) chars); aborting" }

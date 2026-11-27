@@ -1,7 +1,7 @@
 # dsh-fish-jiyu —— 线性投影压缩引擎
 #
-# 自己带引擎和编译器（lib/vcc/ 是从 dsh-compaction-vcc 搬进来的 MIT 代码），
-# 不要求另装 vcc。但同一个 ctx.compaction 只能有一个实现，所以别的实现要先腾开。
+# 引擎和编译器都在本包（lib/engine/、lib/compiler/，内核最初搬自 dsh-compaction-vcc，
+# MIT，已由本包接管）。同一个 ctx.compaction 只能有一个实现，所以别的实现要先腾开。
 #
 # 生效方式：同一批生效里安好自己、关掉别的压缩引擎，中间别留空窗。
 - id: compaction-fold
@@ -14,10 +14,13 @@
   - id: compaction-jiyu
     name: 'dsh-fish-jiyu/engine'
     config:
-      # 只在这些键上沿用原来的配置面；投影参数写在 index.js 的常量里。
       thresholdRatio: 0.35
       retainTurns: 1
       retainTokens: 16384
+      # 2026-11-27：plan 才通上了。此前 resolveConfig 把这个键静默丢掉，
+      # 写成 plan 也一直跑 time（二分，vcc 留下的旧路）。plan 是本包自己的规划：
+      # 一次算出 keep（50ms vs 二分 2.3s），按性价比保块。
+      engine: plan
   # 暂缓工具单独一个 entry（和原来 vcc 的 tool-recall 一样）：宿主只给声明过的
   # 插件注入 tools，塞进引擎类里拿不到。删掉这一行 = 没有 jiyu_hold，
   # 引擎那半的暂缓判断仍能工作，只是没人能调。

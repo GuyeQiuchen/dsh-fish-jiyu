@@ -48,8 +48,8 @@ Write-Host "package.json cleaned"
 if (Test-Path $patchPath) {
   $patch = [System.IO.File]::ReadAllText($patchPath, [System.Text.Encoding]::UTF8)
   $patch = $patch -replace "(?m)^- id: compaction-vcc\r?\n  disabled: true", "- id: compaction-vcc`n  disabled: false"
-  # 只删「从 jiyu 行到下一条顶格 - id: 之前」。不要用 (?s)：那会一路吞到文件尾，
-  # 把别的插件配置一起删掉。
+  # Remove only the span from the jiyu row up to the next top-level "- id:".
+  # Do NOT use (?s): that would swallow to end of file and delete other plugins' config.
   $patch = $patch -replace "(?m)^- id: compaction-jiyu\r?\n(?:[ \t]+.*\r?\n?)*", ""
   [System.IO.File]::WriteAllText($patchPath, $patch, (New-Object System.Text.UTF8Encoding($false)))
   Write-Host "patch: compaction-vcc re-enabled, compaction-jiyu removed"

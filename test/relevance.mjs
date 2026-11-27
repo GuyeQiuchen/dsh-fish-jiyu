@@ -31,7 +31,7 @@ assert.equal(tierOf(0, 10, 1, plain, ['风扇', '天气']), 2, '只中一个词�
 assert.equal(tierOf(9, 10, 1, block, ['风扇', '曲线']), 0, '近段本来就保原文')
 
 // 五、端到端在这层测不了：projectRegion 的近段原文来自 vcc 编译结果（entries），
-// 空 entries 时它会把 keep 拉到全部块、结果只有近段。真实链路由 test/jiyu.test.mjs
+// 空 entries 时它会把 keep 拉到全部块、结果只有近段。真实链路由 test/acceptance.mjs
 // 拿真会话日志覆盖，这一条只看分档本身。
 
 console.log('relevance tests: ok')

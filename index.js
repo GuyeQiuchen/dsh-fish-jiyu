@@ -2,9 +2,9 @@
 /**
  * dsh-fish-jiyu —— 线性投影压缩引擎。
  *
- * 换掉 vcc 的 `compile()`（唯一被写明的扩展点），其余（触发时机、保留区、
- * 事务回滚、surface 协议）全部沿用 vcc：那些和策略无关，是踩过的坑。
- * vcc 的引擎与编译器已经搬进 lib/vcc/，本包不再要求使用者另装它。
+ * 引擎与编译器都在本包：`lib/engine/`（触发、保留区、事务、surface）与
+ * `lib/compiler/`（条目渲染、词元、噪声、检查点）。内核最初搬自 dsh-compaction-vcc
+ * （MIT），0.4.29 起由本包接管维护；不依赖任何外部压缩内核。
  *
  * 投影规则（lib/linear.js）：
  *   - 最近几块：原文逐条保留；
@@ -16,7 +16,10 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { unknownTypesOf } from './lib/blocks.js'
-import { assignBlocks, projectRegion, buildIndexLine, resultDigest, stripReminders, sessionAlert, unknownAlert, DEFAULT_NEAR_SHARE, DEFAULT_FAR_SHARE } from './lib/linear.js'
+import {
+  assignBlocks, projectRegion, buildIndexLine, resultDigest, stripReminders, sessionAlert, unknownAlert,
+  DEFAULT_NEAR_SHARE, DEFAULT_FAR_SHARE, DEFAULT_FACT_CAP, DEFAULT_KEYWORD_CAP,
+} from './lib/engine/api.js'
 // —— 决策报告（可删）：写一份 last-report.json，供 jiyu_inspect 读。
 import { makeReport, writeReport } from './lib/report.js'
 // —— 约束区（可删）：把用户明确要求单独留一块，不参与折叠。
@@ -34,11 +37,13 @@ function markAlive(text) {
 }
 markAlive(new Date().toISOString())
 
-// —— 搬进来的 vcc 引擎与编译器：本包自带，不依赖外部装 vcc。
-// 加载失败时先把错误落盘再照常抛，免得只在界面上显示成「没激活」。
+// —— 引擎与编译器的加载诊断：失败时先落盘再照常抛，
+// 免得界面上只显示「没激活」，而磁盘上没有任何线索。
 function recordLoadError(what, error) {
   try {
-    const dir = path.join(homedir(), '.dsh', 'fish-jiyu')
+    // 和报告同口径：设了 DSH_HOME 就写到 DSH_HOME 下，否则 ~/.dsh。
+    const home = String(process.env.DSH_HOME ?? '').trim() || path.join(homedir(), '.dsh')
+    const dir = path.join(home, 'fish-jiyu')
     mkdirSync(dir, { recursive: true })
     const text = `[${new Date().toISOString()}] ${what}\n${String(error?.stack ?? error)}\n`
     writeFileSync(path.join(dir, 'load-error.txt'), text, 'utf8')
@@ -47,28 +52,31 @@ function recordLoadError(what, error) {
   }
 }
 
-// 2026-11-25 为什么必须是动态 import：
-// 这两个模块的依赖链断在宿主树上时（`@deepseek-ai/dsh-compaction` 只存在于 app.asar），
-// 静态 import 会让整个模块在 `markAlive` 之后、`recordLoadError` 能被调用之前就炸掉——
-// 下面那个函数定义了却永远没机会执行，于是界面上只有「未运行」三个字，定位成本极高。
-// 改成顶层 await + try：失败先落盘 `~/.dsh/fish-jiyu/load-error.txt`，再照常抛
-// （不能吞——吞了引擎就静默不激活，比崩溃更难查）。
+// 2026-11-25 修（溯报的 bug）：这两行原来是静态 import。ES 模块的静态 import
+// 在模块体执行之前求值，所以只要引擎或编译器的依赖链断一环，整个模块直接抛错，
+// 上面的 recordLoadError 定义了却永远轮不到调用——插件页只显示「未运行」，
+// load-error.txt 不存在，零信息（溯为此耗了大半天）。
+// 改成动态 import 并显式 throw：吞掉异常会让引擎静默不激活，比崩溃更难查。
+// 2026-11-27：编译器和引擎都搬进本包（lib/compiler/、lib/engine/），不再有 lib/vcc。
+// 两条链各自 try：坏哪条，load-error.txt 就写哪条。
 let DefaultEngine
-let COMPILER
 try {
-  const [engineModule, compilerModule] = await Promise.all([
-    import('./lib/vcc/engine.js'),
-    import('./lib/vcc/compiler.js'),
-  ])
-  DefaultEngine = engineModule.default
-  COMPILER = compilerModule
+  DefaultEngine = (await import('./lib/engine/base.js')).default
 } catch (error) {
-  recordLoadError('加载 lib/vcc（引擎或编译器）失败', error)
+  recordLoadError('加载 lib/engine（引擎基类）失败', error)
   throw error
 }
 
-/** vcc 的编译器：借它的逐条渲染（工具一行、噪声剥除、检查点识别），不借它的截断尺度。 */
-const estimateTokens = COMPILER.estimateEntryTokens ?? ((text) => String(text ?? '').length)
+let COMPILER
+try {
+  COMPILER = await import('./lib/compiler/render.js')
+} catch (error) {
+  recordLoadError('加载 lib/compiler（编译器）失败', error)
+  throw error
+}
+
+/** 词元估算：条目渲染与预算都走这一个尺子。 */
+const { estimateEntryTokens: estimateTokens } = await import('./lib/compiler/tokens.js')
 
 /** 检查点里写的后端名，验收时认这个。 */
 const PROVIDER = 'dsh-fish-jiyu'
@@ -80,14 +88,14 @@ const DEFAULT_NEAR_BLOCKS = 3
 const DEFAULT_MID_MAX = 140
 /** 远段每块最多几个关键词。 */
 const DEFAULT_FAR_WORDS = 6
-/** vcc 的检查点上限兜底值（它自己的默认）。 */
+/** 检查点总量上限的兜底值（引擎自己没给时用）。 */
 const DEFAULT_CAP = 65536
-/** 近段逐条渲染的放宽尺度：比 vcc 默认的 512/1024 宽，近段更接近原话。 */
+/** 近段逐条渲染的放宽尺度：比条目渲染的默认尺度宽，近段更接近原话。 */
 const NEAR_TEXT_TOKENS = 2048
 const NEAR_USER_TOKENS = 4096
 /** 投影至少要压掉一成，否则不如直接交基类的结果。 */
 const SHRINK_KEEP = 0.85
-/** 读不到 thresholdRatio 时按这个算（vcc 的默认是 0.5，本机配的是 0.35）。 */
+/** 读不到 thresholdRatio 时按这个算（本机配的是 0.35）。 */
 const DEFAULT_THRESHOLD = 0.35
 /** 目标取触发线的这一份：压完落在线下，才不会一压再压。 */
 const TARGET_SHARE = 0.5
@@ -319,9 +327,8 @@ export class FishLinearEngine extends DefaultEngine {
   /**
    * 投影一次压缩。
    *
-   * 只向 vcc 借两样东西：触发与通道（父类的事务、surface 协议），以及它的条目
-   * 渲染器（工具一行、噪声剥除、旧检查点识别）。条目由本引擎自己按放宽的尺度
-   * 重新编，所以近段拿到的是接近原话的行，而不是 vcc 已经截过一遍的产物。
+   * 触发与通道来自基类（事务、surface 协议）；条目由本包编译器按放宽的尺度
+   * 重新编，所以近段拿到的是接近原话的行，而不是被默认尺度截过一遍的产物。
    *
    * @param prepared - 已计价的选择快照。
    * @param agent - 签名位（本引擎不派模型调用）。
@@ -331,10 +338,10 @@ export class FishLinearEngine extends DefaultEngine {
   async compile(prepared, agent, signal) {
     const base = await super.compile(prepared, agent, signal)
     const result = { ...base, provider: PROVIDER, model: MODEL }
+    // 2026-11-27：删掉 `typeof compileNodes !== 'function'` 的跳过分支——render.js 是
+    // 静态 `export function compileNodes`，这条永远是 false，留着只会让「跳过压缩」
+    // 看起来像一种可能的运行状态（审查 A10）。
     const compileNodes = COMPILER.compileNodes
-    if (typeof compileNodes !== 'function') {
-      return { ...result, linear: { skipped: 'no-compiler' } }
-    }
     try {
       signal?.throwIfAborted()
       const cap = resolveCap(this, prepared)
@@ -376,8 +383,13 @@ export class FishLinearEngine extends DefaultEngine {
         midMax: DEFAULT_MID_MAX,
         farWords: DEFAULT_FAR_WORDS,
         // 近段上限 / 远段上限（0.4.16）：都可配，默认 0.85 / 0.15。
+        engine: String(this.config?.engine ?? 'time'),
         nearShare: Number(this.config?.nearShare ?? DEFAULT_NEAR_SHARE),
         farShare: Number(this.config?.farShare ?? DEFAULT_FAR_SHARE),
+        // 单行成本封顶（0.4.21）：中段事实行 60 token、远段关键词行 24 token。
+        // 实测同一预算下原文块 46→69，取回率不变。0 = 不裁。
+        factCap: Number(this.config?.factCap ?? DEFAULT_FACT_CAP),
+        keywordCap: Number(this.config?.keywordCap ?? DEFAULT_KEYWORD_CAP),
       })
       // —— 约束区：紧跟在投影之后拼在最前。它不参与折叠，只继承 + 新抽。
       // 抽不出东西就是空串，一个字都不占，也不会改变原有行为。
@@ -426,7 +438,16 @@ export class FishLinearEngine extends DefaultEngine {
           before: baseTokens,
           after,
           stats: projected.stats,
-          shadowed: result?.shadowedRange,
+          // 四档之外的两块，单独记账：报告才能自己证明「四档 + 约束 + 提醒 = 压后」。
+          constraintTokens,
+          alertTokens,
+          // base.compile() 的返回里没有 shadowedRange（它由事务在提交后补上），
+          // 所以这里用 prepared 上的真实值，别写一个恒 null 的字段。
+          shadowed: {
+            start: Number(prepared?.shadowedSeqs?.[0] ?? 0),
+            end: Number(prepared?.shadowedSeqs?.[prepared?.shadowedSeqs?.length - 1] ?? 0),
+            tokens: Number(prepared?.shadowedTokenCount ?? 0),
+          },
           // 不用展开：条目上万时 Math.min(...seqs) 会爆调用栈
           // 2026-11-22 实测约 13 万条抛 RangeError，且会被 compile() 的 catch 吞掉，
           // 表现为「投影静默跳过」——没有任何报错，只是这一次没压。
@@ -462,7 +483,7 @@ export class FishLinearEngine extends DefaultEngine {
         },
       }
     } catch (error) {
-      // 投影失败不能连累压缩本身：退回 vcc 原样结果。
+      // 投影失败不能连累压缩本身：退回基类的原样结果。
       try {
         console.warn(`compaction-jiyu: projection skipped: ${String(error?.message ?? error)}`)
       } catch {

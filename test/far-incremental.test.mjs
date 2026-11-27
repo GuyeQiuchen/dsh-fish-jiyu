@@ -88,3 +88,24 @@ test('MIN_FAR_LINE 与真实行宽对得上（否则逐条装永远装不进）'
   const width = keywordLine(block, blockKeywords(block, 6)).length
   assert.ok(width > MIN_FAR_LINE, `关键词行 ${width} 字符，不该小于门槛 ${MIN_FAR_LINE}`)
 })
+
+// —— 单行成本封顶（0.4.21）：把中段/远段每行裁短，省下来的预算还给近段原话
+test('行成本封顶：同预算下原文块变多，且不超目标', () => {
+  const { blocks, entries } = makeSession(40)
+  const target = 4000
+  const plain = projectRegion({ entries, blocks, targetTokens: target, estimate })
+  const capped = projectRegion({ entries, blocks, targetTokens: target, estimate, factCap: 60, keywordCap: 24 })
+  assert.ok(capped.stats.near >= plain.stats.near, `封顶后原文块 ${capped.stats.near} 少于不封顶 ${plain.stats.near}`)
+  assert.ok(capped.stats.tokens <= target, `超预算：${capped.stats.tokens}`)
+})
+
+test('行成本封顶：冻结行不被重裁（否则前缀会漂）', () => {
+  const { blocks, entries } = makeSession(12)
+  const first = projectRegion({ entries, blocks, targetTokens: 3000, estimate, factCap: 60, keywordCap: 24 })
+  // 把上一次的行原样喂回去，模拟下一次投影
+  const again = projectRegion({ entries: first.entries, blocks, targetTokens: 3000, estimate, factCap: 20, keywordCap: 10 })
+  const frozenBefore = first.entries.filter((entry) => String(entry.text).includes('[块 seq'))
+  const frozenAfter = again.entries.filter((entry) => String(entry.text).includes('[块 seq'))
+  const overlap = frozenBefore.filter((entry) => frozenAfter.some((other) => other.seq === entry.seq && other.text === entry.text))
+  assert.ok(overlap.length > 0, '已进过窗口的行应逐字节沿用')
+})
