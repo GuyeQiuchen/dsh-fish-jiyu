@@ -119,16 +119,38 @@ export function validatePatch(text) {
   const lines = linesOf(text)
   const ids = new Map()
   const problems = []
+  // 三种行：顶层 `- id:`、顶层 `- insert:`、以及它们下面的缩进字段。
+  // insert 块里只看「直接子条目」，更深层的插件 id 属于 preset 内部，允许重名。
+  let block = null
+  let insertIndent = null
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]
     if (line.trim() === '' || line.trimStart().startsWith('#')) continue
-    if (/^\s+/.test(line)) continue
-    const m = /^- id:\s*(\S+)\s*$/.exec(line)
-    if (m === null) {
+    const indent = line.length - line.trimStart().length
+    if (indent === 0) {
+      const topId = /^- id:\s*(\S+)\s*$/.exec(line)
+      if (topId !== null) {
+        ids.set(topId[1], (ids.get(topId[1]) ?? 0) + 1)
+        block = 'top'
+        insertIndent = null
+        continue
+      }
+      if (/^- insert:\s*$/.test(line)) {
+        block = 'insert'
+        insertIndent = null
+        continue
+      }
+      block = null
       problems.push(`第 ${i + 1} 行不是条目：${line.slice(0, 40)}`)
       continue
     }
-    ids.set(m[1], (ids.get(m[1]) ?? 0) + 1)
+    const childId = /^- id:\s*(\S+)\s*$/.exec(line.trimStart())
+    if (block === 'insert' && childId !== null) {
+      if (insertIndent === null) insertIndent = indent
+      if (indent === insertIndent) ids.set(childId[1], (ids.get(childId[1]) ?? 0) + 1)
+      continue
+    }
+    if (block === null) problems.push(`第 ${i + 1} 行缩进但不在条目块里：${line.slice(0, 40)}`)
   }
   for (const [id, count] of ids) if (count > 1) problems.push(`id 重复 ${count} 次：${id}`)
   return { problems, ids }
@@ -136,9 +158,15 @@ export function validatePatch(text) {
 
 // —— 复制 ——————————————————————————————————————————————
 
-const COPY_EXCLUDES = new Set(['node_modules', '.git', 'loaded.txt', 'load-error.txt'])
+const COPY_EXCLUDES = new Set(['node_modules', '.git', 'loaded.txt', 'load-error.txt', 'test'])
 
 function copyPackage(from, to) {
+  // 2026-11-28 修：从 profile 自己的 local-packages 副本跑 setup 时，from 和 storeCopy 是同一个路径。
+  // 旧版先 rm(to) 再 cp(from)，等于把源目录清空后再复制自己；实测目录被清成 0 项。
+  if (path.resolve(from) === path.resolve(to)) {
+    info(`源与目标相同，跳过复制：${from}`)
+    return
+  }
   if (existsSync(to)) {
     const stat = lstatSync(to)
     if (stat.isSymbolicLink()) {

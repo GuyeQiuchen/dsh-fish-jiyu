@@ -1,6 +1,6 @@
 {
   "name": "dsh-fish-jiyu",
-  "version": "1.0.1",
+  "version": "1.2.1",
   "type": "module",
   "description": "No model calls, cheaper than model-based compaction, three-band retention that keeps the transition smooth; folded text stays searchable (jiyu_search), pageable (jiyu_recall) and listable (jiyu_blocks).",
   "keywords": [
@@ -40,7 +40,6 @@
     "uninstall.ps1",
     "install.sh",
     "uninstall.sh",
-    "test",
     "scripts"
   ],
   "license": "MIT",

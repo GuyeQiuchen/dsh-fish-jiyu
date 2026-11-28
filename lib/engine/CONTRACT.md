@@ -18,9 +18,9 @@
 | `blocks` | `{ startSeq, endSeq, title?, tools? }[]` | 块，endSeq 为开区间 |
 | `targetTokens` | number | 预算；0 = 不压缩 |
 | `estimate` | `(text) => number` | token 估算 |
-| `engine` | `'time' \| 'plan'` | 怎么定 keep；默认 `'time'` |
 | `factCap` / `keywordCap` | number | 单行上限，0 = 不裁 |
-| `nearShare` / `farShare` | number | 旧路径的参数 |
+| `farShare` | number | 远段预算上限（仍生效） |
+| `nearShare` / `engine` | — | **已弃用**：接受但不生效，只提示一次 |
 
 输出：
 
@@ -37,7 +37,7 @@
 
 ### 常量
 
-`DEFAULT_NEAR_SHARE=0.85`、`DEFAULT_FAR_SHARE=0.15`、`DEFAULT_FACT_CAP=60`、`DEFAULT_KEYWORD_CAP=24`、`DEFAULT_HEADROOM=0.05`、`DEFAULT_FACT_SHARE=0.2`。改数值算契约变更。
+`DEFAULT_FAR_SHARE=0.15`、`DEFAULT_FACT_CAP=60`、`DEFAULT_KEYWORD_CAP=24`、`DEFAULT_HEADROOM=0.05`、`DEFAULT_FACT_SHARE=0.2`。改数值算契约变更。
 
 ## 不属于引擎的
 

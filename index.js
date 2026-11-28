@@ -18,7 +18,7 @@ import path from 'node:path'
 import { unknownTypesOf } from './lib/blocks.js'
 import {
   assignBlocks, projectRegion, buildIndexLine, resultDigest, stripReminders, sessionAlert, unknownAlert,
-  DEFAULT_NEAR_SHARE, DEFAULT_FAR_SHARE, DEFAULT_FACT_CAP, DEFAULT_KEYWORD_CAP,
+  DEFAULT_FAR_SHARE, DEFAULT_FACT_CAP, DEFAULT_KEYWORD_CAP,
 } from './lib/engine/api.js'
 // —— 决策报告（可删）：写一份 last-report.json，供 jiyu_inspect 读。
 import { makeReport, writeReport } from './lib/report.js'
@@ -382,9 +382,7 @@ export class FishLinearEngine extends DefaultEngine {
         nearBlocks: DEFAULT_NEAR_BLOCKS,
         midMax: DEFAULT_MID_MAX,
         farWords: DEFAULT_FAR_WORDS,
-        // 近段上限 / 远段上限（0.4.16）：都可配，默认 0.85 / 0.15。
-        engine: String(this.config?.engine ?? 'time'),
-        nearShare: Number(this.config?.nearShare ?? DEFAULT_NEAR_SHARE),
+        // 远段上限（0.4.16）可配；engine 固定 plan，nearShare 已弃用。
         farShare: Number(this.config?.farShare ?? DEFAULT_FAR_SHARE),
         // 单行成本封顶（0.4.21）：中段事实行 60 token、远段关键词行 24 token。
         // 实测同一预算下原文块 46→69，取回率不变。0 = 不裁。
